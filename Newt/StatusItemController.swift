@@ -104,8 +104,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             image.isTemplate = true
             statusItem.button?.image = image
         }
+        let blocked = sleep.blockedByBattery
+        let label = blocked.map { "battery \($0.percent)% — recharge to enable" }
+                    ?? sleep.displayString()
         durationSliderView.refresh(position: sleep.sliderPosition,
-                                   displayText: sleep.displayString())
+                                   displayText: label,
+                                   enabled: blocked == nil)
         batterySliderView?.refresh(value: sleep.batteryThresholdPercent)
         loginItem.state = login.isEnabled ? .on : .off
     }
@@ -192,11 +196,16 @@ final class DurationSliderView: NSView {
 
     required init?(coder: NSCoder) { nil }
 
-    /// Sync from external state (e.g. expiry timer fired → slider returns to 0).
-    func refresh(position: Int, displayText: String) {
+    /// Sync from external state (e.g. expiry timer fired → slider returns to 0,
+    /// or battery dropped below the floor → slider goes disabled).
+    func refresh(position: Int, displayText: String, enabled: Bool) {
         if slider.integerValue != position {
             slider.integerValue = position
         }
+        slider.isEnabled = enabled
+        let color: NSColor = enabled ? .secondaryLabelColor : .tertiaryLabelColor
+        titleLabel.textColor = color
+        valueLabel.textColor = color
         valueLabel.stringValue = displayText
     }
 

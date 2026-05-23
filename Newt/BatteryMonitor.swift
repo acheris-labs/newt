@@ -21,6 +21,10 @@ final class BatteryMonitor {
     /// True if the Mac has an internal battery to monitor at all.
     var hasBattery: Bool { Self.read() != nil }
 
+    /// Current battery snapshot, or nil if no battery. Cheap; can be called
+    /// at refresh time to decide whether the keep-awake slider is allowed.
+    func currentSnapshot() -> (percent: Int, onAC: Bool)? { Self.read() }
+
     func enable() {
         enabled = true
         restart()

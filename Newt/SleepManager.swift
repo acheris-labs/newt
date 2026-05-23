@@ -88,20 +88,44 @@ final class SleepManager {
     // MARK: - Public actions
 
     /// Drive everything from the slider. 0 disengages; 1–9 starts a timed
-    /// session of the corresponding duration; 10 engages indefinite.
+    /// session of the corresponding duration; 10 engages indefinite. Refuses
+    /// to engage while battery is below the configured floor.
     func setSliderPosition(_ pos: Int) {
         let p = max(0, min(Self.sliderDurations.count - 1, pos))
-        sliderPosition = p
         let value = Self.sliderDurations[p]
-        switch value {
-        case 0:
+        if value == 0 {
+            sliderPosition = 0
             disengage()
-        case -1:
+            return
+        }
+        if let blocked = blockedByBattery {
+            // Don't let the user re-arm a session that the cutoff will just
+            // tear down again. Snap back to 0 and explain why.
+            sliderPosition = 0
+            onHelperMessage?(
+                "Can't engage — battery \(blocked.percent)% is at or below your \(blocked.threshold)% floor")
+            onChange?()
+            return
+        }
+        sliderPosition = p
+        if value == -1 {
             engage(.indefinite, durationSeconds: 0)
-        default:
+        } else {
             engage(.timed(until: Date().addingTimeInterval(TimeInterval(value))),
                    durationSeconds: value)
         }
+    }
+
+    /// nil if engagement is allowed; otherwise the (current %, configured %)
+    /// pair so the UI can explain why the slider is greyed out.
+    var blockedByBattery: (percent: Int, threshold: Int)? {
+        let threshold = battery.thresholdPercent
+        guard threshold > 0,
+              let snap = battery.currentSnapshot(),
+              !snap.onAC,
+              snap.percent <= threshold
+        else { return nil }
+        return (snap.percent, threshold)
     }
 
     /// Menu label for the slider: "off" / "1h 23m" (remaining) / "indefinite".
