@@ -35,7 +35,7 @@ else
   HARDENED := --options runtime --timestamp
 endif
 
-.PHONY: build install run rerun kill clean reset-sleep helper-status notarize dmg setup-notary setup-secrets
+.PHONY: build install run rerun kill clean reset-sleep helper-status notarize dmg setup-notary setup-secrets icon
 
 # --- Credential bootstrap ---------------------------------------------------
 # Reusable shell snippets that read the Developer ID identity + Team ID from
@@ -98,6 +98,8 @@ build:
 	  $(HELPER_SRC) -o $(MACOS)/$(HELPER_NAME)
 	cp Newt/Info.plist $(CONTENTS)/Info.plist
 	cp $(HELPER_NAME).plist $(DAEMONS)/$(HELPER_NAME).plist
+	@mkdir -p $(CONTENTS)/Resources
+	cp Newt/Newt.icns $(CONTENTS)/Resources/Newt.icns
 	# Sign inside-out: nested helper first, then seal the bundle. The XPC
 	# code-signing requirements match on bundle identifier, so keep it stable.
 	codesign --force --sign "$(SIGN_ID)" $(HARDENED) \
@@ -158,6 +160,13 @@ dmg: notarize
 # Undo a stuck `pmset disablesleep` by hand (helper normally does this itself).
 reset-sleep:
 	sudo pmset -a disablesleep 0
+
+# Regenerate the app icon (Newt/Newt.icns) from tools/gen-icon.swift.
+icon:
+	swift tools/gen-icon.swift Newt.iconset
+	iconutil -c icns Newt.iconset -o Newt/Newt.icns
+	rm -rf Newt.iconset
+	@echo "wrote Newt/Newt.icns"
 
 # Show whether sleep is currently disabled. `pmset -g` reports it as
 # `SleepDisabled` (capital S), not `disablesleep`.

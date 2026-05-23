@@ -5,3 +5,6 @@
 build/
 *.dmg
 *.zip
+
+# Regen via `make icon`
+Newt.iconset/
