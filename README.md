@@ -1,13 +1,7 @@
 # Newt
 
 Tiny macOS menu bar app that keeps your Mac awake — including when the lid is
-closed — for a chosen duration, then restores normal sleep. A GUI sibling of
-the `lidawake` shell script: same effect, one click in the menu bar instead
-of a terminal and `sudo`.
-
-Named after Rebecca "Newt" Jorden, who survived the colony by never sleeping
-— a companion to [tracker](https://github.com/acheris-labs/tracker), named
-after the film's motion tracker.
+closed — for a chosen duration, then restores normal sleep.
 
 Apple Silicon, macOS 13+. Developer ID signed and notarized.
 
@@ -27,7 +21,7 @@ off from the menu.
 
 ## Use
 
-Click the lizard in your menu bar.
+Click the menu bar icon.
 
 - **Keep awake** slider — 11 positions: off, 1 min, 15 min, 30 min, 1 h, 2 h,
   4 h, 8 h, 16 h, 24 h, indefinite. Picking any non-zero position holds the
@@ -52,8 +46,7 @@ Click the lizard in your menu bar.
   code-signing requirement on both ends.
 - `NewtHelper/` — the launchd daemon that runs
   `/usr/bin/pmset -a disablesleep 0|1` as root. If Newt disconnects
-  while sleep is disabled the helper restores it automatically (the
-  daemon equivalent of `lidawake`'s `trap cleanup`).
+  while sleep is disabled the helper restores it automatically.
 - `BatteryMonitor.swift` — polls `IOPSCopyPowerSourcesInfo` every 15 s
   while engaged; trips disengage when on battery and percent ≤ threshold.
 - `LoginItemController.swift` — `SMAppService.mainApp` for auto-launch.
