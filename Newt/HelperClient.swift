@@ -30,7 +30,6 @@ final class HelperClient {
                 try service.register()
                 NSLog("Newt: register() ok, status now \(service.status.rawValue)")
                 if service.status == .enabled { return nil }
-                // Registered but pending approval — take the user there.
                 SMAppService.openSystemSettingsLoginItems()
                 return "Enable Newt under System Settings ▸ Login Items."
             } catch {
@@ -41,8 +40,7 @@ final class HelperClient {
             SMAppService.openSystemSettingsLoginItems()
             return "Approve Newt under System Settings ▸ Login Items."
         case .notFound:
-            // SMAppService daemons must be registered from /Applications.
-            return "Move Newt.app to /Applications, then quit and reopen it."
+            return "Helper not found — make sure Newt.app is in /Applications."
         @unknown default:
             return "Unexpected helper status."
         }

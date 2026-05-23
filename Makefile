@@ -34,7 +34,59 @@ else
   HARDENED := --options runtime --timestamp
 endif
 
-.PHONY: build install run rerun kill clean reset-sleep helper-status notarize dmg
+.PHONY: build install run rerun kill clean reset-sleep helper-status notarize dmg setup-notary setup-secrets
+
+# --- Credential bootstrap ---------------------------------------------------
+# Reusable shell snippets that read the Developer ID identity + Team ID from
+# your keychain. Inlined into the recipes that need them so this only runs
+# when invoked, not on every `make`.
+define _devid_detect
+DEVID_LINE=$$(security find-identity -v -p codesigning \
+  | sed -nE 's/^[[:space:]]*[0-9]+\)[[:space:]]+[A-F0-9]+[[:space:]]+"(.*)".*$$/\1/p' \
+  | head -1); \
+test -n "$$DEVID_LINE" || { echo "no Developer ID Application identity in keychain"; exit 1; }; \
+DEVID_TEAM=$$(echo "$$DEVID_LINE" | sed -nE 's/.*\(([A-Z0-9]+)\).*/\1/p')
+endef
+
+# Store the notarytool keychain profile. Run once per machine.
+#   1. Copy the 19-char app-specific password from appleid.apple.com to your clipboard.
+#   2. make setup-notary APPLE_ID=you@example.com
+setup-notary:
+	@test -n "$(APPLE_ID)" || { \
+	  echo "usage: make setup-notary APPLE_ID=you@example.com"; \
+	  echo "(copy your 19-char app-specific password to the clipboard first)"; \
+	  exit 1; }
+	@bash -ec '$(_devid_detect); \
+	  PW=$$(pbpaste); \
+	  test $${#PW} -eq 19 || { echo "clipboard is $${#PW} chars, expected 19 (xxxx-xxxx-xxxx-xxxx)"; exit 1; }; \
+	  xcrun notarytool store-credentials $(NOTARY_PROFILE) \
+	    --apple-id "$(APPLE_ID)" --team-id "$$DEVID_TEAM" --password "$$PW"; \
+	  echo "notarytool profile $(NOTARY_PROFILE) is ready (team $$DEVID_TEAM)"'
+
+# Upload Developer ID + notary credentials to GitHub as org-level secrets
+# scoped to the listed repos. Run once after exporting the cert as .p12.
+#   1. Keychain Access → My Certificates → right-click Developer ID Application
+#      → Export → save as devid.p12 with a strong password.
+#   2. Copy your app-specific password to the clipboard.
+#   3. make setup-secrets P12=path/to/devid.p12 APPLE_ID=you@example.com \
+#                         ORG=acheris-labs REPOS=tracker,newt
+setup-secrets:
+	@test -f "$(P12)" || { echo "set P12=path/to/devid.p12"; exit 1; }
+	@test -n "$(APPLE_ID)" || { echo "set APPLE_ID=you@example.com"; exit 1; }
+	@test -n "$(ORG)"      || { echo "set ORG=acheris-labs"; exit 1; }
+	@test -n "$(REPOS)"    || { echo "set REPOS=tracker,newt"; exit 1; }
+	@bash -ec '$(_devid_detect); \
+	  read -s -p ".p12 export password: " P12_PW; echo; \
+	  APP_PW=$$(pbpaste); \
+	  test $${#APP_PW} -eq 19 || { echo "clipboard not a 19-char app-specific password"; exit 1; }; \
+	  echo "uploading to $(ORG) repos: $(REPOS)"; \
+	  base64 -i "$(P12)"        | gh secret set DEVID_CERT_P12      --org $(ORG) --repos $(REPOS); \
+	  printf "%s" "$$P12_PW"    | gh secret set DEVID_CERT_PASSWORD --org $(ORG) --repos $(REPOS); \
+	  printf "%s" "$$DEVID_LINE"| gh secret set DEVID_IDENTITY      --org $(ORG) --repos $(REPOS); \
+	  printf "%s" "$(APPLE_ID)" | gh secret set APPLE_ID            --org $(ORG) --repos $(REPOS); \
+	  printf "%s" "$$DEVID_TEAM"| gh secret set APPLE_TEAM_ID       --org $(ORG) --repos $(REPOS); \
+	  printf "%s" "$$APP_PW"    | gh secret set APPLE_APP_PASSWORD  --org $(ORG) --repos $(REPOS); \
+	  echo done'
 
 build:
 	@mkdir -p $(MACOS) $(DAEMONS)
@@ -106,6 +158,8 @@ dmg: notarize
 reset-sleep:
 	sudo pmset -a disablesleep 0
 
-# Show whether the privileged helper is registered/enabled.
+# Show whether sleep is currently disabled. `pmset -g` reports it as
+# `SleepDisabled` (capital S), not `disablesleep`.
 helper-status:
-	-pmset -g | grep -i disablesleep || echo "(disablesleep not set)"
+	@pmset -g | awk '/SleepDisabled/ { print "SleepDisabled =", $$2; found=1 } END { if (!found) print "(SleepDisabled not set)" }'
+	@pmset -g assertions | grep -E 'Newt|^\s*(PreventUser)' || true
