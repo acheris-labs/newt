@@ -18,6 +18,9 @@ jobs:
     env:
       KEYCHAIN_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}
       NOTARY_PROFILE: newt-notary
+      # Must match the SPARKLE_VERSION in the Makefile so the CLI tool we
+      # use here to sign updates matches the framework embedded in the app.
+      SPARKLE_VERSION: "2.9.2"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -141,3 +144,108 @@ jobs:
           gh release create "${{ steps.v.outputs.tag }}" \
             "${ARGS[@]}" \
             "${{ steps.dmg.outputs.path }}"
+
+      # --- Sparkle appcast --------------------------------------------------
+      # Regenerate appcast.xml from all releases and push to gh-pages, where
+      # Pages serves it at the URL embedded in Info.plist.
+      - name: Cache Sparkle tools
+        id: sparkle-cache
+        uses: actions/cache@v4
+        with:
+          path: sparkle-tools
+          key: sparkle-${{ env.SPARKLE_VERSION }}
+
+      - name: Download Sparkle tools
+        if: steps.sparkle-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p sparkle-tools
+          curl -L "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz" \
+            | tar -xJ -C sparkle-tools
+
+      - name: Generate + publish appcast
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          : "${SPARKLE_ED_PRIVATE_KEY:?missing SPARKLE_ED_PRIVATE_KEY secret}"
+
+          SIGN_UPDATE="$(pwd)/sparkle-tools/bin/sign_update"
+          test -x "$SIGN_UPDATE" || { echo "sign_update not found"; exit 1; }
+
+          KEY_FILE="$RUNNER_TEMP/sparkle_ed_private_key"
+          printf '%s' "$SPARKLE_ED_PRIVATE_KEY" > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+
+          DMG_DIR="$RUNNER_TEMP/dmgs"
+          mkdir -p "$DMG_DIR"
+
+          gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            --jq '[.[] | select(.draft == false)]' > "$RUNNER_TEMP/releases.json"
+
+          APPCAST="$RUNNER_TEMP/appcast.xml"
+          {
+            cat <<EOF
+          <?xml version="1.0" standalone="yes"?>
+          <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+            <channel>
+              <title>Newt</title>
+              <link>https://acheris-labs.github.io/newt/appcast.xml</link>
+              <description>Updates for Newt</description>
+              <language>en</language>
+          EOF
+
+            jq -c '.[]' "$RUNNER_TEMP/releases.json" | while read -r release; do
+              TAG=$(jq -r '.tag_name' <<< "$release")
+              VERSION="${TAG#v}"
+              PUBLISHED=$(jq -r '.published_at' <<< "$release")
+              NOTES_URL=$(jq -r '.html_url' <<< "$release")
+              DMG_URL=$(jq -r '.assets[]? | select(.name | endswith(".dmg")) | .browser_download_url' <<< "$release")
+              DMG_NAME=$(jq -r '.assets[]? | select(.name | endswith(".dmg")) | .name' <<< "$release")
+
+              [ -z "$DMG_URL" ] && continue
+
+              if [ ! -f "$DMG_DIR/$DMG_NAME" ]; then
+                curl -sL -o "$DMG_DIR/$DMG_NAME" "$DMG_URL"
+              fi
+
+              SIG_BLOB=$("$SIGN_UPDATE" -f "$KEY_FILE" "$DMG_DIR/$DMG_NAME")
+              PUB_RFC822=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$PUBLISHED" "+%a, %d %b %Y %H:%M:%S +0000")
+
+              cat <<EOF
+              <item>
+                <title>Newt ${VERSION}</title>
+                <pubDate>${PUB_RFC822}</pubDate>
+                <sparkle:version>${VERSION}</sparkle:version>
+                <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
+                <sparkle:releaseNotesLink>${NOTES_URL}</sparkle:releaseNotesLink>
+                <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+                <enclosure url="${DMG_URL}" ${SIG_BLOB} type="application/octet-stream"/>
+              </item>
+          EOF
+            done
+
+            cat <<EOF
+            </channel>
+          </rss>
+          EOF
+          } > "$APPCAST"
+
+          rm -f "$KEY_FILE"
+
+          git config --global user.email "actions@github.com"
+          git config --global user.name "GitHub Actions"
+          PAGES_DIR="$RUNNER_TEMP/pages"
+          git worktree add "$PAGES_DIR" gh-pages
+          cp "$APPCAST" "$PAGES_DIR/appcast.xml"
+          (
+            cd "$PAGES_DIR"
+            git add appcast.xml
+            if git diff --cached --quiet; then
+              echo "appcast.xml unchanged; nothing to push"
+            else
+              git commit -m "appcast: Newt ${{ steps.v.outputs.version }}"
+              git push origin gh-pages
+            fi
+          )

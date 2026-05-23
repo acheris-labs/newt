@@ -12,6 +12,15 @@ INSTALLED   := /Applications/$(APP_NAME).app
 TARGET      := arm64-apple-macos13.0
 SWIFTFLAGS  := -O -target $(TARGET)
 
+# --- Sparkle auto-update ----------------------------------------------------
+# Pin Sparkle to a specific version; release.yml uses the same value when
+# fetching sign_update. Bumping requires updating both spots together.
+SPARKLE_VERSION    := 2.9.2
+SPARKLE_DIR        := $(BUILD)/sparkle
+SPARKLE_FRAMEWORK  := $(SPARKLE_DIR)/Sparkle.framework
+SWIFTFLAGS         += -F $(SPARKLE_DIR) -framework Sparkle \
+                      -Xlinker -rpath -Xlinker @executable_path/../Frameworks
+
 APP_SRC     := Newt/main.swift Newt/AppDelegate.swift \
                Newt/StatusItemController.swift Newt/SleepManager.swift \
                Newt/HelperClient.swift Newt/LoginItemController.swift \
@@ -35,7 +44,7 @@ else
   HARDENED := --options runtime --timestamp
 endif
 
-.PHONY: build install run rerun kill clean reset-sleep helper-status notarize dmg setup-notary setup-secrets icon
+.PHONY: build install run rerun kill clean reset-sleep helper-status notarize dmg setup-notary setup-secrets icon sparkle
 
 # --- Credential bootstrap ---------------------------------------------------
 # Reusable shell snippets that read the Developer ID identity + Team ID from
@@ -89,8 +98,19 @@ setup-secrets:
 	  printf "%s" "$$APP_PW"    | gh secret set APPLE_APP_PASSWORD  --org $(ORG) --repos $(REPOS); \
 	  echo done'
 
-build:
-	@mkdir -p $(MACOS) $(DAEMONS)
+# Sparkle framework: download + extract once, cached in BUILD/sparkle.
+# The HelperSrc app build links against this; release.yml caches the
+# downloaded tarball across CI runs by the same version key.
+sparkle: $(SPARKLE_FRAMEWORK)
+$(SPARKLE_FRAMEWORK):
+	@mkdir -p $(SPARKLE_DIR)
+	@echo "fetching Sparkle $(SPARKLE_VERSION)..."
+	curl -sL https://github.com/sparkle-project/Sparkle/releases/download/$(SPARKLE_VERSION)/Sparkle-$(SPARKLE_VERSION).tar.xz \
+	  | tar -xJ -C $(SPARKLE_DIR)
+	@test -d $(SPARKLE_FRAMEWORK) || { echo "Sparkle.framework missing after extract"; exit 1; }
+
+build: $(SPARKLE_FRAMEWORK)
+	@mkdir -p $(MACOS) $(DAEMONS) $(CONTENTS)/Frameworks
 	swiftc $(SWIFTFLAGS) $(APP_SRC) -o $(MACOS)/$(APP_NAME)
 	swiftc $(SWIFTFLAGS) \
 	  -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist \
@@ -100,8 +120,23 @@ build:
 	cp $(HELPER_NAME).plist $(DAEMONS)/$(HELPER_NAME).plist
 	@mkdir -p $(CONTENTS)/Resources
 	cp Newt/Newt.icns $(CONTENTS)/Resources/Newt.icns
-	# Sign inside-out: nested helper first, then seal the bundle. The XPC
-	# code-signing requirements match on bundle identifier, so keep it stable.
+	# Embed Sparkle.framework (replaces any prior copy to stay idempotent).
+	rm -rf $(CONTENTS)/Frameworks/Sparkle.framework
+	cp -R $(SPARKLE_FRAMEWORK) $(CONTENTS)/Frameworks/
+	# Sign inside-out: deepest Sparkle nested code first, then helper, then
+	# the outer bundle. Each signature must chain to its enclosing one.
+	# --preserve-metadata=entitlements keeps Sparkle Updater.app's bundled
+	# entitlements intact (they're not ours to recreate).
+	codesign --force --sign "$(SIGN_ID)" $(HARDENED) \
+	  $(CONTENTS)/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc
+	codesign --force --sign "$(SIGN_ID)" $(HARDENED) \
+	  $(CONTENTS)/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc
+	codesign --force --sign "$(SIGN_ID)" $(HARDENED) \
+	  $(CONTENTS)/Frameworks/Sparkle.framework/Versions/B/Autoupdate
+	codesign --force --sign "$(SIGN_ID)" $(HARDENED) --preserve-metadata=entitlements \
+	  $(CONTENTS)/Frameworks/Sparkle.framework/Versions/B/Updater.app
+	codesign --force --sign "$(SIGN_ID)" $(HARDENED) \
+	  $(CONTENTS)/Frameworks/Sparkle.framework
 	codesign --force --sign "$(SIGN_ID)" $(HARDENED) \
 	  --identifier $(HELPER_NAME) $(MACOS)/$(HELPER_NAME)
 	codesign --force --sign "$(SIGN_ID)" $(HARDENED) \

@@ -1,4 +1,5 @@
 import AppKit
+import Sparkle
 
 /// Owns the menu bar item and its menu, and drives `SleepManager` from it.
 final class StatusItemController: NSObject, NSMenuDelegate {
@@ -7,16 +8,19 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let sleep = SleepManager()
     private let login = LoginItemController()
     private let menu = NSMenu()
+    private let updater: SPUStandardUpdaterController
 
     private var durationSliderView: DurationSliderView!
     private var batterySliderView: BatterySliderView?
     private var loginItem: NSMenuItem!
+    private var autoUpdateItem: NSMenuItem!
     private var messageItem: NSMenuItem!
 
     /// Ticks the remaining-time label while the menu is open.
     private var menuTickTimer: Timer?
 
-    override init() {
+    init(updater: SPUStandardUpdaterController) {
+        self.updater = updater
         super.init()
         buildMenu()
         menu.delegate = self
@@ -70,10 +74,27 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         loginItem.target = self
         menu.addItem(loginItem)
 
+        menu.addItem(.separator())
+
+        let checkNowItem = NSMenuItem(
+            title: "Check for Updates…",
+            action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
+            keyEquivalent: "")
+        checkNowItem.target = updater
+        menu.addItem(checkNowItem)
+
+        autoUpdateItem = NSMenuItem(title: "Check Automatically",
+                                    action: #selector(toggleAutoUpdate),
+                                    keyEquivalent: "")
+        autoUpdateItem.target = self
+        menu.addItem(autoUpdateItem)
+
         messageItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         messageItem.isEnabled = false
         messageItem.isHidden = true
         menu.addItem(messageItem)
+
+        menu.addItem(.separator())
 
         let quit = NSMenuItem(title: "Quit Newt",
                               action: #selector(NSApplication.terminate(_:)),
@@ -88,6 +109,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         if let msg = login.setEnabled(!login.isEnabled) {
             showMessage(msg)
         }
+        refresh()
+    }
+
+    @objc private func toggleAutoUpdate() {
+        let now = updater.updater.automaticallyChecksForUpdates
+        updater.updater.automaticallyChecksForUpdates = !now
         refresh()
     }
 
@@ -112,6 +139,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                                    enabled: blocked == nil)
         batterySliderView?.refresh(value: sleep.batteryThresholdPercent)
         loginItem.state = login.isEnabled ? .on : .off
+        autoUpdateItem?.state = updater.updater.automaticallyChecksForUpdates ? .on : .off
     }
 
     private func showMessage(_ text: String) {
