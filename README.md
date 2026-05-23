@@ -16,6 +16,25 @@ under **System Settings ▸ General ▸ Login Items & Extensions**. Enable it �
 this is a one-time approval that lets the helper toggle `pmset disablesleep`
 as root, which is what stops the Mac from sleeping when the lid is closed.
 
+> **If the menu shows "Helper not found"**, your browser quarantined the
+> `.dmg` on download (Chrome does this; Safari typically not). The privileged
+> helper API refuses to register quarantined apps even when notarization
+> passes. Fix by stripping the flag:
+>
+> ```
+> sudo xattr -dr com.apple.quarantine /Applications/Newt.app
+> ```
+>
+> (If `sudo` itself fails with *Operation not permitted*, grant Terminal
+> **App Management** access under System Settings ▸ Privacy & Security
+> first.) Then quit and reopen Newt.
+>
+> Alternatively, re-download with `curl` — it doesn't quarantine:
+>
+> ```
+> curl -L -o Newt.dmg https://github.com/acheris-labs/newt/releases/latest/download/Newt-<version>.dmg
+> ```
+
 Newt also sets itself as **Open at Login** by default; you can toggle that
 off from the menu.
 
