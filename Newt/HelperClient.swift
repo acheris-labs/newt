@@ -25,7 +25,11 @@ final class HelperClient {
         switch service.status {
         case .enabled:
             return nil
-        case .notRegistered:
+        case .notRegistered, .notFound:
+            // .notFound also covers the fresh-install case where BTM has no
+            // record yet — smd returns ESRCH for the disposition lookup and
+            // surfaces it as .notFound. register() is what populates BTM, so
+            // both states must take the registration path.
             do {
                 try service.register()
                 NSLog("Newt: register() ok, status now \(service.status.rawValue)")
@@ -39,8 +43,6 @@ final class HelperClient {
         case .requiresApproval:
             SMAppService.openSystemSettingsLoginItems()
             return "Approve Newt under System Settings ▸ Login Items."
-        case .notFound:
-            return "Helper not found — make sure Newt.app is in /Applications."
         @unknown default:
             return "Unexpected helper status."
         }
