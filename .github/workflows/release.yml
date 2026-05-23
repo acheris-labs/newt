@@ -181,8 +181,21 @@ jobs:
           DMG_DIR="$RUNNER_TEMP/dmgs"
           mkdir -p "$DMG_DIR"
 
-          gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
-            --jq '[.[] | select(.draft == false)]' > "$RUNNER_TEMP/releases.json"
+          # The releases listing API takes a moment to reflect a release
+          # we just created — poll up to 60s so this run's tag is included.
+          TAG="${{ steps.v.outputs.tag }}"
+          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              --jq '[.[] | select(.draft == false)]' > "$RUNNER_TEMP/releases.json"
+            if jq -e --arg t "$TAG" 'any(.tag_name == $t)' "$RUNNER_TEMP/releases.json" >/dev/null; then
+              echo "found $TAG in releases listing (attempt $attempt)"
+              break
+            fi
+            echo "waiting for $TAG to appear in releases listing (attempt $attempt)..."
+            sleep 5
+          done
+          jq -e --arg t "$TAG" 'any(.tag_name == $t)' "$RUNNER_TEMP/releases.json" >/dev/null \
+            || { echo "tag $TAG never appeared in releases listing"; exit 1; }
 
           APPCAST="$RUNNER_TEMP/appcast.xml"
           {
