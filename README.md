@@ -12,9 +12,11 @@ Grab the latest `.dmg` from
 into `/Applications`.
 
 On first launch macOS will prompt you to approve Newt's background helper
-under **System Settings ▸ General ▸ Login Items & Extensions**. Enable it —
-this is a one-time approval that lets the helper toggle `pmset disablesleep`
-as root, which is what stops the Mac from sleeping when the lid is closed.
+under **System Settings ▸ General ▸ Login Items & Extensions**. Enable it,
+then quit Newt from the menu and reopen it — the helper status is only
+re-checked at launch, so the warning won't clear until you relaunch. The
+approval is one-time and lets the helper toggle `pmset disablesleep` as
+root, which is what stops the Mac from sleeping when the lid is closed.
 
 > **If the menu shows "Helper not found"** on Newt 0.1.2 or later, your
 > browser likely quarantined the `.dmg` — `SMAppService` won't register a

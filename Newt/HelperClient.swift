@@ -35,14 +35,14 @@ final class HelperClient {
                 NSLog("Newt: register() ok, status now \(service.status.rawValue)")
                 if service.status == .enabled { return nil }
                 SMAppService.openSystemSettingsLoginItems()
-                return "Enable Newt under System Settings ▸ Login Items."
+                return "Enable Newt in Login Items, then quit and reopen Newt."
             } catch {
                 NSLog("Newt: register() failed: \(error)")
                 return "Could not register the helper: \(error.localizedDescription)"
             }
         case .requiresApproval:
             SMAppService.openSystemSettingsLoginItems()
-            return "Approve Newt under System Settings ▸ Login Items."
+            return "Approve Newt in Login Items, then quit and reopen Newt."
         @unknown default:
             return "Unexpected helper status."
         }
