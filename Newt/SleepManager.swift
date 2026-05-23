@@ -18,11 +18,35 @@ final class SleepManager {
     /// Seconds chosen for the active timed session, for menu checkmarks.
     private(set) var activeDurationSeconds: Int = 0
 
+    /// Slider duration table. Index = slider position (0…10).
+    ///   0  → off (sentinel, never used as a duration)
+    ///   -1 → indefinite (sentinel)
+    ///   N  → seconds for that timed step.
+    static let sliderDurations: [Int] = [
+        0,             // 0  off
+        60,            // 1  1 min
+        15 * 60,       // 2  15 min
+        30 * 60,       // 3  30 min
+        60 * 60,       // 4  1 h
+        2  * 3600,     // 5  2 h
+        4  * 3600,     // 6  4 h
+        8  * 3600,     // 7  8 h
+        16 * 3600,     // 8  16 h
+        24 * 3600,     // 9  24 h
+        -1             // 10 indefinite
+    ]
+
+    /// Current slider position 0…10. The slider is the single on/off control;
+    /// 0 = off, 1–9 = timed, 10 = indefinite. Reset to 0 on disengage.
+    private(set) var sliderPosition: Int = 0
+
     private var systemAssertion: IOPMAssertionID = 0
     private var displayAssertion: IOPMAssertionID = 0
+    private var preventSystemAssertion: IOPMAssertionID = 0
     private var assertionsActive = false
     private var expiryTimer: Timer?
     private let helper = HelperClient()
+    private let battery = BatteryMonitor()
 
     /// Called whenever `state` changes — the controller refreshes the menu.
     var onChange: (() -> Void)?
@@ -30,6 +54,28 @@ final class SleepManager {
     var onHelperMessage: ((String) -> Void)?
 
     var isActive: Bool { state != .off }
+    var hasBattery: Bool { battery.hasBattery }
+
+    /// Battery percentage floor at which Newt auto-releases its claims.
+    /// 0 disables the cutoff. Persisted to UserDefaults.
+    var batteryThresholdPercent: Int {
+        get { battery.thresholdPercent }
+        set {
+            let clamped = max(0, min(30, newValue))
+            battery.thresholdPercent = clamped
+            UserDefaults.standard.set(clamped, forKey: "BatteryThresholdPercent")
+        }
+    }
+
+    init() {
+        let saved = UserDefaults.standard.integer(forKey: "BatteryThresholdPercent")
+        battery.thresholdPercent = max(0, min(30, saved))
+        battery.onTrip = { [weak self] in
+            guard let self, self.isActive else { return }
+            self.onHelperMessage?("Released keep-awake — battery hit \(self.battery.thresholdPercent)%")
+            self.disengage()
+        }
+    }
 
     /// Seconds left in a timed session, or nil if not timed.
     var remaining: TimeInterval? {
@@ -41,20 +87,44 @@ final class SleepManager {
 
     // MARK: - Public actions
 
-    func toggleIndefinite() {
-        if case .indefinite = state {
+    /// Drive everything from the slider. 0 disengages; 1–9 starts a timed
+    /// session of the corresponding duration; 10 engages indefinite.
+    func setSliderPosition(_ pos: Int) {
+        let p = max(0, min(Self.sliderDurations.count - 1, pos))
+        sliderPosition = p
+        let value = Self.sliderDurations[p]
+        switch value {
+        case 0:
             disengage()
-        } else {
+        case -1:
             engage(.indefinite, durationSeconds: 0)
+        default:
+            engage(.timed(until: Date().addingTimeInterval(TimeInterval(value))),
+                   durationSeconds: value)
         }
     }
 
-    func startTimed(seconds: Int) {
-        engage(.timed(until: Date().addingTimeInterval(TimeInterval(seconds))),
-               durationSeconds: seconds)
+    /// Menu label for the slider: "off" / "1h 23m" (remaining) / "indefinite".
+    func displayString() -> String {
+        switch state {
+        case .off:        return "off"
+        case .indefinite: return "indefinite"
+        case .timed(let until):
+            return Self.formatRemaining(until.timeIntervalSinceNow)
+        }
     }
 
-    func stop() { disengage() }
+    private static func formatRemaining(_ interval: TimeInterval) -> String {
+        let total = max(0, Int(interval.rounded(.up)))
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        let s = total % 60
+        // ≥ 1h: hours + minutes (seconds add noise at that scale).
+        // <  1h: minutes + seconds.
+        if h > 0  { return "\(h)h \(m)m" }
+        if m > 0  { return "\(m)m \(s)s" }
+        return "\(s)s"
+    }
 
     /// Register the privileged helper early, so approval isn't deferred to the
     /// first toggle. Surfaces any message via `onHelperMessage`.
@@ -71,6 +141,7 @@ final class SleepManager {
         activeDurationSeconds = durationSeconds
         if !assertionsActive { createAssertions() }
         scheduleExpiry()
+        battery.enable()
         helper.setDisableSleep(true) { [weak self] _, err in
             if let err { self?.onHelperMessage?(err) }
         }
@@ -81,8 +152,10 @@ final class SleepManager {
         guard state != .off else { return }
         state = .off
         activeDurationSeconds = 0
+        sliderPosition = 0
         expiryTimer?.invalidate()
         expiryTimer = nil
+        battery.disable()
         releaseAssertions()
         helper.setDisableSleep(false) { _, _ in }
         onChange?()
@@ -103,12 +176,19 @@ final class SleepManager {
 
     private func createAssertions() {
         let reason = "Newt — keep awake" as CFString
+        // Mirrors `caffeinate -dis` (`-m` disk-idle has no public IOKit
+        // assertion; even `caffeinate -m` reaches into private internals.
+        // `-u` is a one-shot "declare user active" that only matters when
+        // the display is asleep — irrelevant here).
         IOPMAssertionCreateWithName(
-            kIOPMAssertionTypePreventUserIdleSystemSleep as CFString,
+            kIOPMAssertionTypePreventUserIdleSystemSleep as CFString,    // -i
             IOPMAssertionLevel(kIOPMAssertionLevelOn), reason, &systemAssertion)
         IOPMAssertionCreateWithName(
-            kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString,
+            kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString,   // -d
             IOPMAssertionLevel(kIOPMAssertionLevelOn), reason, &displayAssertion)
+        IOPMAssertionCreateWithName(
+            kIOPMAssertionTypePreventSystemSleep as CFString,            // -s
+            IOPMAssertionLevel(kIOPMAssertionLevelOn), reason, &preventSystemAssertion)
         assertionsActive = true
     }
 
@@ -116,8 +196,10 @@ final class SleepManager {
         guard assertionsActive else { return }
         IOPMAssertionRelease(systemAssertion)
         IOPMAssertionRelease(displayAssertion)
+        IOPMAssertionRelease(preventSystemAssertion)
         systemAssertion = 0
         displayAssertion = 0
+        preventSystemAssertion = 0
         assertionsActive = false
     }
 }

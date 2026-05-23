@@ -5,23 +5,16 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let statusItem = NSStatusBar.system.statusItem(
         withLength: NSStatusItem.variableLength)
     private let sleep = SleepManager()
+    private let login = LoginItemController()
     private let menu = NSMenu()
 
-    private var noSleepItem: NSMenuItem!
-    private var durationParent: NSMenuItem!
-    private let durationMenu = NSMenu()
-    private var stopItem: NSMenuItem!
+    private var durationSliderView: DurationSliderView!
+    private var batterySliderView: BatterySliderView?
+    private var loginItem: NSMenuItem!
     private var messageItem: NSMenuItem!
 
-    /// Label / seconds for each timed-session choice (mirrors lidawake).
-    private let durations: [(label: String, seconds: Int)] = [
-        ("15 minutes", 15 * 60),
-        ("30 minutes", 30 * 60),
-        ("1 hour", 60 * 60),
-        ("2 hours", 2 * 60 * 60),
-        ("4 hours", 4 * 60 * 60),
-        ("8 hours", 8 * 60 * 60),
-    ]
+    /// Ticks the remaining-time label while the menu is open.
+    private var menuTickTimer: Timer?
 
     override init() {
         super.init()
@@ -31,8 +24,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         sleep.onChange = { [weak self] in self?.refresh() }
         sleep.onHelperMessage = { [weak self] msg in self?.showMessage(msg) }
         refresh()
-        // Register the privileged helper now rather than on first toggle.
         sleep.prepareHelper()
+        // First run defaults to Open at Login — afterward, respect the user.
+        if let msg = login.bootstrapDefaultIfNeeded() { showMessage(msg) }
+        refresh()
     }
 
     /// Called on app termination — restores normal sleep behavior.
@@ -43,33 +38,37 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     // MARK: - Menu construction
 
     private func buildMenu() {
-        noSleepItem = NSMenuItem(title: "No sleep",
-                                 action: #selector(toggleNoSleep),
-                                 keyEquivalent: "")
-        noSleepItem.target = self
-        menu.addItem(noSleepItem)
-
-        menu.addItem(.separator())
-
-        durationParent = NSMenuItem(title: "Keep awake for",
-                                    action: nil, keyEquivalent: "")
-        for d in durations {
-            let item = NSMenuItem(title: d.label,
-                                  action: #selector(pickDuration(_:)),
-                                  keyEquivalent: "")
-            item.target = self
-            item.tag = d.seconds
-            durationMenu.addItem(item)
+        // Keep-awake slider — the primary control.
+        durationSliderView = DurationSliderView(
+            initialPosition: sleep.sliderPosition,
+            initialText:     sleep.displayString()
+        ) { [weak self] pos in
+            self?.clearMessage()
+            self?.sleep.setSliderPosition(pos)
         }
-        durationParent.submenu = durationMenu
-        menu.addItem(durationParent)
+        let durationItem = NSMenuItem()
+        durationItem.view = durationSliderView
+        menu.addItem(durationItem)
 
-        stopItem = NSMenuItem(title: "Stop",
-                              action: #selector(stop), keyEquivalent: "")
-        stopItem.target = self
-        menu.addItem(stopItem)
+        // Battery cutoff slider — only meaningful on machines with a battery.
+        if sleep.hasBattery {
+            menu.addItem(.separator())
+            let view = BatterySliderView(initialValue: sleep.batteryThresholdPercent) { [weak self] v in
+                self?.sleep.batteryThresholdPercent = v
+            }
+            let item = NSMenuItem()
+            item.view = view
+            menu.addItem(item)
+            batterySliderView = view
+        }
 
         menu.addItem(.separator())
+
+        loginItem = NSMenuItem(title: "Open at Login",
+                               action: #selector(toggleLogin),
+                               keyEquivalent: "")
+        loginItem.target = self
+        menu.addItem(loginItem)
 
         messageItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         messageItem.isEnabled = false
@@ -84,19 +83,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     // MARK: - Actions
 
-    @objc private func toggleNoSleep() {
+    @objc private func toggleLogin() {
         clearMessage()
-        sleep.toggleIndefinite()
-    }
-
-    @objc private func pickDuration(_ sender: NSMenuItem) {
-        clearMessage()
-        sleep.startTimed(seconds: sender.tag)
-    }
-
-    @objc private func stop() {
-        clearMessage()
-        sleep.stop()
+        if let msg = login.setEnabled(!login.isEnabled) {
+            showMessage(msg)
+        }
+        refresh()
     }
 
     // MARK: - Refresh
@@ -105,32 +97,17 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// remaining-time label is current.
     private func refresh() {
         let active = sleep.isActive
-        let symbol = active ? "eye" : "eye.slash"
+        // Newt: filled lizard while keep-awake is on, outline when sleeping.
+        let symbol = active ? "lizard.fill" : "lizard"
         if let image = NSImage(systemSymbolName: symbol,
                                accessibilityDescription: "Newt") {
             image.isTemplate = true
             statusItem.button?.image = image
         }
-
-        noSleepItem.state = (sleep.state == .indefinite) ? .on : .off
-
-        if let remaining = sleep.remaining {
-            durationParent.title = "Keep awake for — \(Self.format(remaining)) left"
-        } else {
-            durationParent.title = "Keep awake for"
-        }
-        for item in durationMenu.items {
-            item.state = (item.tag == sleep.activeDurationSeconds
-                          && sleep.activeDurationSeconds != 0) ? .on : .off
-        }
-
-        // Stop is only meaningful for a timed session; the checkbox handles
-        // the indefinite case.
-        if case .timed = sleep.state {
-            stopItem.isHidden = false
-        } else {
-            stopItem.isHidden = true
-        }
+        durationSliderView.refresh(position: sleep.sliderPosition,
+                                   displayText: sleep.displayString())
+        batterySliderView?.refresh(value: sleep.batteryThresholdPercent)
+        loginItem.state = login.isEnabled ? .on : .off
     }
 
     private func showMessage(_ text: String) {
@@ -143,17 +120,152 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         messageItem.isHidden = true
     }
 
-    /// Format a remaining interval as e.g. "1h 42m" or "12m".
-    private static func format(_ interval: TimeInterval) -> String {
-        let total = Int(interval.rounded())
-        let minutes = (total + 59) / 60          // round up so it never shows 0m
-        if minutes < 60 { return "\(minutes)m" }
-        return "\(minutes / 60)h \(minutes % 60)m"
-    }
-
     // MARK: - NSMenuDelegate
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         refresh()
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        // Tick the remaining-time label live while the menu is shown.
+        // .common mode includes NSEventTracking so the timer fires during
+        // menu tracking — without it the label would freeze the moment the
+        // menu opened.
+        menuTickTimer?.invalidate()
+        let t = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            self?.refresh()
+        }
+        RunLoop.main.add(t, forMode: .common)
+        menuTickTimer = t
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        menuTickTimer?.invalidate()
+        menuTickTimer = nil
+    }
+}
+
+// MARK: - Slider views
+
+/// The primary control: a slider whose 11 ticks select keep-awake duration.
+/// Position 0 = off, 1–9 = 1 min … 24 h (geometric after the first step),
+/// 10 = indefinite. Right label shows current state — "off", remaining time
+/// like "1h 23m", or "indefinite".
+final class DurationSliderView: NSView {
+    private let slider: NSSlider
+    private let valueLabel: NSTextField
+    private let titleLabel: NSTextField
+    private let onChange: (Int) -> Void
+
+    init(initialPosition: Int, initialText: String,
+         onChange: @escaping (Int) -> Void) {
+        self.onChange = onChange
+        self.slider = NSSlider(value: Double(initialPosition),
+                               minValue: 0, maxValue: 10,
+                               target: nil, action: nil)
+        self.valueLabel = NSTextField(labelWithString: initialText)
+        self.titleLabel = NSTextField(labelWithString: "Keep awake")
+        super.init(frame: NSRect(x: 0, y: 0, width: 240, height: 44))
+
+        let font = NSFont.menuFont(ofSize: 0)
+        titleLabel.font = font
+        titleLabel.textColor = .secondaryLabelColor
+        titleLabel.frame = NSRect(x: 14, y: 24, width: 100, height: 16)
+        addSubview(titleLabel)
+
+        valueLabel.font = font
+        valueLabel.alignment = .right
+        valueLabel.textColor = .secondaryLabelColor
+        valueLabel.frame = NSRect(x: 110, y: 24, width: 116, height: 16)
+        addSubview(valueLabel)
+
+        // Snap to ticks; only commit on release so dragging across positions
+        // doesn't churn the helper / IOPMAssertions on each intermediate tick.
+        slider.target = self
+        slider.action = #selector(sliderChanged(_:))
+        slider.numberOfTickMarks = 11
+        slider.allowsTickMarkValuesOnly = true
+        slider.isContinuous = false
+        slider.frame = NSRect(x: 14, y: 4, width: 212, height: 18)
+        addSubview(slider)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    /// Sync from external state (e.g. expiry timer fired → slider returns to 0).
+    func refresh(position: Int, displayText: String) {
+        if slider.integerValue != position {
+            slider.integerValue = position
+        }
+        valueLabel.stringValue = displayText
+    }
+
+    @objc private func sliderChanged(_ sender: NSSlider) {
+        let v = Int(sender.doubleValue.rounded())
+        sender.integerValue = v
+        onChange(v)
+    }
+}
+
+/// A small NSView hosted inside an NSMenuItem: label + slider for the
+/// battery-percent floor at which Newt auto-releases keep-awake.
+/// Range 0…30; 0 reads as "off" (hold until the Mac dies).
+final class BatterySliderView: NSView {
+    private let slider: NSSlider
+    private let valueLabel: NSTextField
+    private let titleLabel: NSTextField
+    private let onChange: (Int) -> Void
+
+    init(initialValue: Int, onChange: @escaping (Int) -> Void) {
+        self.onChange = onChange
+        self.slider = NSSlider(value: Double(initialValue),
+                               minValue: 0, maxValue: 30,
+                               target: nil, action: nil)
+        self.valueLabel = NSTextField(labelWithString: "")
+        self.titleLabel = NSTextField(labelWithString: "Low battery cutoff")
+        super.init(frame: NSRect(x: 0, y: 0, width: 240, height: 44))
+
+        let font = NSFont.menuFont(ofSize: 0)
+        titleLabel.font = font
+        titleLabel.textColor = .secondaryLabelColor
+        titleLabel.frame = NSRect(x: 14, y: 24, width: 170, height: 16)
+        addSubview(titleLabel)
+
+        valueLabel.font = font
+        valueLabel.alignment = .right
+        valueLabel.textColor = .secondaryLabelColor
+        valueLabel.frame = NSRect(x: 170, y: 24, width: 56, height: 16)
+        addSubview(valueLabel)
+
+        slider.target = self
+        slider.action = #selector(sliderChanged(_:))
+        slider.numberOfTickMarks = 7    // 0, 5, 10, 15, 20, 25, 30
+        slider.allowsTickMarkValuesOnly = false
+        slider.frame = NSRect(x: 14, y: 4, width: 212, height: 18)
+        addSubview(slider)
+
+        updateLabel(initialValue)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    /// Sync from external state changes (e.g. another source updates the
+    /// threshold). Avoids a feedback loop with `onChange`.
+    func refresh(value: Int) {
+        if slider.integerValue != value {
+            slider.integerValue = value
+        }
+        updateLabel(value)
+    }
+
+    @objc private func sliderChanged(_ sender: NSSlider) {
+        let v = Int(sender.doubleValue.rounded())
+        sender.integerValue = v
+        updateLabel(v)
+        onChange(v)
+    }
+
+    private func updateLabel(_ v: Int) {
+        valueLabel.stringValue = v == 0 ? "off" : "\(v)%"
     }
 }
