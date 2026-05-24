@@ -16,6 +16,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private var autoUpdateItem: NSMenuItem!
     private var messageItem: NSMenuItem!
     private var wakeModeItems: [WakeMode: NSMenuItem] = [:]
+    private var leftClickItems: [LeftClickAction: NSMenuItem] = [:]
+    private var fixedClickSliderView: DurationSliderView!
 
     /// Ticks the remaining-time label while the menu is open.
     private var menuTickTimer: Timer?
@@ -25,7 +27,15 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         super.init()
         buildMenu()
         menu.delegate = self
-        statusItem.menu = menu
+        // Custom click handling: left-click obeys `LeftClickAction`, right-click
+        // (and Control-click) always opens the menu. We don't assign
+        // `statusItem.menu` here — assigning it would short-circuit the action
+        // and make every click open the menu unconditionally.
+        if let button = statusItem.button {
+            button.target = self
+            button.action = #selector(statusItemClicked(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
         sleep.onChange = { [weak self] in self?.refresh() }
         sleep.onHelperMessage = { [weak self] msg in self?.showMessage(msg) }
         refresh()
@@ -69,21 +79,51 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        // "Wake modes" submenu — toggles for the individual IOKit assertions
-        // and the helper's lid-close override.
-        let wakeModesItem = NSMenuItem(title: "Wake modes", action: nil, keyEquivalent: "")
-        let wakeModesSub = NSMenu()
+        // "Configuration" submenu — two sections, each introduced by a disabled
+        // header item: the four wake-mechanism toggles, then the left-click
+        // action radio group + its fixed-duration slider.
+        let configItem = NSMenuItem(title: "Configuration", action: nil, keyEquivalent: "")
+        let configSub = NSMenu()
+
+        let wakeHeader = NSMenuItem(title: "Wake modes", action: nil, keyEquivalent: "")
+        wakeHeader.isEnabled = false
+        configSub.addItem(wakeHeader)
         for mode in WakeMode.allCases {
             let item = NSMenuItem(title: mode.menuTitle,
                                   action: #selector(toggleWakeMode(_:)),
                                   keyEquivalent: "")
             item.target = self
             item.representedObject = mode.rawValue
-            wakeModesSub.addItem(item)
+            configSub.addItem(item)
             wakeModeItems[mode] = item
         }
-        wakeModesItem.submenu = wakeModesSub
-        menu.addItem(wakeModesItem)
+        configSub.addItem(.separator())
+        let leftClickHeader = NSMenuItem(title: "Left click action", action: nil, keyEquivalent: "")
+        leftClickHeader.isEnabled = false
+        configSub.addItem(leftClickHeader)
+        for action in LeftClickAction.allCases {
+            let item = NSMenuItem(title: action.menuTitle,
+                                  action: #selector(toggleLeftClickAction(_:)),
+                                  keyEquivalent: "")
+            item.target = self
+            item.representedObject = action.rawValue
+            configSub.addItem(item)
+            leftClickItems[action] = item
+        }
+        fixedClickSliderView = DurationSliderView(
+            title: "On for",
+            initialPosition: sleep.fixedClickSliderPosition,
+            initialText: SleepManager.displayString(forSliderPosition: sleep.fixedClickSliderPosition)
+        ) { [weak self] pos in
+            let p = max(1, pos)  // option 3 must engage something
+            self?.sleep.fixedClickSliderPosition = p
+            self?.refresh()
+        }
+        let fixedItem = NSMenuItem()
+        fixedItem.view = fixedClickSliderView
+        configSub.addItem(fixedItem)
+        configItem.submenu = configSub
+        menu.addItem(configItem)
 
         loginItem = NSMenuItem(title: "Open at Login",
                                action: #selector(toggleLogin),
@@ -136,6 +176,32 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         sleep.setMode(mode, enabled: !sleep.isEnabled(mode))
     }
 
+    @objc private func toggleLeftClickAction(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let action = LeftClickAction(rawValue: raw) else { return }
+        sleep.setLeftClickAction(action)
+    }
+
+    /// Routes left/right mouse events on the menu bar icon. Right-click and
+    /// Control-click always pop the menu. Left-click obeys `leftClickAction`.
+    @objc private func statusItemClicked(_ sender: Any?) {
+        let event = NSApp.currentEvent
+        let isRightClick = event?.type == .rightMouseUp
+        let isControlClick = event?.modifierFlags.contains(.control) ?? false
+        let opensMenu = isRightClick || isControlClick || sleep.leftClickAction == .openMenu
+        if opensMenu {
+            // Standard idiom for "show menu without owning it persistently."
+            // Assigning `menu` then performing a click pops it; clearing the
+            // assignment afterward restores the custom action for future clicks.
+            statusItem.menu = menu
+            statusItem.button?.performClick(nil)
+            statusItem.menu = nil
+            return
+        }
+        clearMessage()
+        sleep.performLeftClickToggle()
+    }
+
     @objc private func toggleAutoUpdate() {
         let now = updater.updater.automaticallyChecksForUpdates
         updater.updater.automaticallyChecksForUpdates = !now
@@ -167,6 +233,20 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         for (mode, item) in wakeModeItems {
             item.state = sleep.isEnabled(mode) ? .on : .off
         }
+        for (action, item) in leftClickItems {
+            item.state = sleep.leftClickAction == action ? .on : .off
+        }
+        // Surface the remembered duration so the user can see what
+        // "toggle last" would re-engage at.
+        if let lastItem = leftClickItems[.toggleLast] {
+            let dur = SleepManager.displayString(forSliderPosition: sleep.lastUsedSliderPosition)
+            lastItem.title = "Toggle last duration (\(dur))"
+        }
+        // Fixed-click slider is configurable only when option 3 is selected.
+        fixedClickSliderView.refresh(
+            position: sleep.fixedClickSliderPosition,
+            displayText: SleepManager.displayString(forSliderPosition: sleep.fixedClickSliderPosition),
+            enabled: sleep.leftClickAction == .toggleFixed)
     }
 
     private func showMessage(_ text: String) {
@@ -224,14 +304,15 @@ final class DurationSliderView: NSView {
     private let titleLabel: NSTextField
     private let onChange: (Int) -> Void
 
-    init(initialPosition: Int, initialText: String,
+    init(title: String = "Keep awake",
+         initialPosition: Int, initialText: String,
          onChange: @escaping (Int) -> Void) {
         self.onChange = onChange
         self.slider = NSSlider(value: Double(initialPosition),
                                minValue: 0, maxValue: 10,
                                target: nil, action: nil)
         self.valueLabel = NSTextField(labelWithString: initialText)
-        self.titleLabel = NSTextField(labelWithString: "Keep awake")
+        self.titleLabel = NSTextField(labelWithString: title)
         super.init(frame: NSRect(x: 0, y: 0, width: 240, height: 44))
 
         let font = NSFont.menuFont(ofSize: 0)

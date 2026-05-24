@@ -27,6 +27,21 @@ enum WakeMode: String, CaseIterable {
     }
 }
 
+/// What left-clicking the menu bar icon does. Right-click always opens the menu.
+enum LeftClickAction: String, CaseIterable {
+    case openMenu        // same as right-click — Newt's pre-existing behavior
+    case toggleLast      // re-engage at the last-used duration (or 4h on first run)
+    case toggleFixed     // engage at the user-configured fixed duration
+
+    var menuTitle: String {
+        switch self {
+        case .openMenu:    return "Open menu"
+        case .toggleLast:  return "Toggle last duration"
+        case .toggleFixed: return "Toggle on for fixed duration"
+        }
+    }
+}
+
 /// Single source of truth for keep-awake state. Engaging applies the full
 /// lidawake treatment — IOKit power assertions (idle/display sleep) plus the
 /// privileged helper's `pmset disablesleep` (lid-close sleep). Disengaging
@@ -90,6 +105,26 @@ final class SleepManager {
     /// upgrade path preserves prior behavior.
     private var enabledModes: Set<WakeMode> = []
 
+    /// Left-click behavior. Default `.openMenu` preserves prior UX on upgrade.
+    private(set) var leftClickAction: LeftClickAction = .openMenu
+
+    /// Last slider position the user successfully engaged at (1…10). Used by
+    /// the `.toggleLast` left-click action. Defaults to 6 (4h).
+    private(set) var lastUsedSliderPosition: Int = 6
+
+    /// Slider position used by the `.toggleFixed` left-click action. Clamped to
+    /// 1…10 (no "off" — option 3 must engage something). Defaults to 6 (4h).
+    var fixedClickSliderPosition: Int = 6 {
+        didSet {
+            let clamped = max(1, min(10, fixedClickSliderPosition))
+            if clamped != fixedClickSliderPosition {
+                fixedClickSliderPosition = clamped
+                return
+            }
+            UserDefaults.standard.set(clamped, forKey: "FixedClickSliderPosition")
+        }
+    }
+
     init() {
         let saved = UserDefaults.standard.integer(forKey: "BatteryThresholdPercent")
         battery.thresholdPercent = max(0, min(30, saved))
@@ -104,6 +139,41 @@ final class SleepManager {
         for mode in WakeMode.allCases {
             let on = defaults.object(forKey: mode.defaultsKey) as? Bool ?? true
             if on { enabledModes.insert(mode) }
+        }
+        // Left-click action + remembered durations.
+        if let raw = defaults.string(forKey: "LeftClickAction"),
+           let action = LeftClickAction(rawValue: raw) {
+            leftClickAction = action
+        }
+        if let n = defaults.object(forKey: "LastUsedSliderPosition") as? Int,
+           (1...10).contains(n) {
+            lastUsedSliderPosition = n
+        }
+        if let n = defaults.object(forKey: "FixedClickSliderPosition") as? Int,
+           (1...10).contains(n) {
+            fixedClickSliderPosition = n
+        }
+    }
+
+    func setLeftClickAction(_ action: LeftClickAction) {
+        guard action != leftClickAction else { return }
+        leftClickAction = action
+        UserDefaults.standard.set(action.rawValue, forKey: "LeftClickAction")
+        onChange?()
+    }
+
+    /// Drive a left-click on the menu bar icon. The controller calls this only
+    /// when `leftClickAction != .openMenu`. If currently active, disengages;
+    /// otherwise engages at the slider position implied by the current action.
+    func performLeftClickToggle() {
+        if isActive {
+            setSliderPosition(0)
+            return
+        }
+        switch leftClickAction {
+        case .openMenu:    return  // controller handles
+        case .toggleLast:  setSliderPosition(lastUsedSliderPosition)
+        case .toggleFixed: setSliderPosition(fixedClickSliderPosition)
         }
     }
 
@@ -171,6 +241,11 @@ final class SleepManager {
             return
         }
         sliderPosition = p
+        // Remember the last successful engagement so `.toggleLast` left-click
+        // can re-engage at the same duration later. Only non-zero positions
+        // are stored — expiry returning to 0 must not overwrite this.
+        lastUsedSliderPosition = p
+        UserDefaults.standard.set(p, forKey: "LastUsedSliderPosition")
         if value == -1 {
             engage(.indefinite, durationSeconds: 0)
         } else {
@@ -199,6 +274,17 @@ final class SleepManager {
         case .timed(let until):
             return Self.formatRemaining(until.timeIntervalSinceNow)
         }
+    }
+
+    /// Static label for an arbitrary slider position 0…10. Used by views
+    /// configuring a duration that isn't currently engaged (e.g. the fixed
+    /// left-click duration).
+    static func displayString(forSliderPosition p: Int) -> String {
+        let idx = max(0, min(sliderDurations.count - 1, p))
+        let secs = sliderDurations[idx]
+        if secs == 0  { return "off" }
+        if secs == -1 { return "indefinite" }
+        return formatRemaining(TimeInterval(secs))
     }
 
     private static func formatRemaining(_ interval: TimeInterval) -> String {
