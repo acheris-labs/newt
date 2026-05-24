@@ -8,6 +8,25 @@ enum AwakeState: Equatable {
     case timed(until: Date)
 }
 
+/// Individually toggleable wake mechanisms. Each maps 1:1 to an IOKit
+/// assertion or the helper's `pmset disablesleep` flag.
+enum WakeMode: String, CaseIterable {
+    case display     // PreventUserIdleDisplaySleep — caffeinate -d
+    case systemIdle  // PreventUserIdleSystemSleep  — caffeinate -i
+    case system      // PreventSystemSleep          — caffeinate -s
+    case lidClosed   // pmset -a disablesleep 1 via helper
+
+    var defaultsKey: String { "WakeMode.\(rawValue)" }
+    var menuTitle: String {
+        switch self {
+        case .display:    return "Keep display on"
+        case .systemIdle: return "Keep system awake when idle"
+        case .system:     return "Prevent system sleep (AC only)"
+        case .lidClosed:  return "Stay awake with lid closed"
+        }
+    }
+}
+
 /// Single source of truth for keep-awake state. Engaging applies the full
 /// lidawake treatment — IOKit power assertions (idle/display sleep) plus the
 /// privileged helper's `pmset disablesleep` (lid-close sleep). Disengaging
@@ -67,6 +86,10 @@ final class SleepManager {
         }
     }
 
+    /// Which mechanisms are enabled. Defaults to all-on on first run so the
+    /// upgrade path preserves prior behavior.
+    private var enabledModes: Set<WakeMode> = []
+
     init() {
         let saved = UserDefaults.standard.integer(forKey: "BatteryThresholdPercent")
         battery.thresholdPercent = max(0, min(30, saved))
@@ -75,6 +98,40 @@ final class SleepManager {
             self.onHelperMessage?("Released keep-awake — battery hit \(self.battery.thresholdPercent)%")
             self.disengage()
         }
+        // Load mode toggles. If a key is missing (first run / upgrade), the
+        // mode defaults to on.
+        let defaults = UserDefaults.standard
+        for mode in WakeMode.allCases {
+            let on = defaults.object(forKey: mode.defaultsKey) as? Bool ?? true
+            if on { enabledModes.insert(mode) }
+        }
+    }
+
+    func isEnabled(_ mode: WakeMode) -> Bool { enabledModes.contains(mode) }
+
+    /// Toggle a wake mechanism. Persists, and if currently engaged, adds or
+    /// drops just that assertion (or flips the helper) without bouncing the
+    /// whole session.
+    func setMode(_ mode: WakeMode, enabled: Bool) {
+        guard enabled != enabledModes.contains(mode) else { return }
+        if enabled { enabledModes.insert(mode) } else { enabledModes.remove(mode) }
+        UserDefaults.standard.set(enabled, forKey: mode.defaultsKey)
+
+        if isActive {
+            switch mode {
+            case .display:    applyAssertion(mode, on: enabled, id: &displayAssertion,
+                                             type: kIOPMAssertionTypePreventUserIdleDisplaySleep)
+            case .systemIdle: applyAssertion(mode, on: enabled, id: &systemAssertion,
+                                             type: kIOPMAssertionTypePreventUserIdleSystemSleep)
+            case .system:     applyAssertion(mode, on: enabled, id: &preventSystemAssertion,
+                                             type: kIOPMAssertionTypePreventSystemSleep)
+            case .lidClosed:
+                helper.setDisableSleep(enabled) { [weak self] _, err in
+                    if let err { self?.onHelperMessage?(err) }
+                }
+            }
+        }
+        onChange?()
     }
 
     /// Seconds left in a timed session, or nil if not timed.
@@ -96,6 +153,12 @@ final class SleepManager {
         if value == 0 {
             sliderPosition = 0
             disengage()
+            return
+        }
+        if enabledModes.isEmpty {
+            sliderPosition = 0
+            onHelperMessage?("Enable at least one wake mode in the menu")
+            onChange?()
             return
         }
         if let blocked = blockedByBattery {
@@ -166,8 +229,10 @@ final class SleepManager {
         if !assertionsActive { createAssertions() }
         scheduleExpiry()
         battery.enable()
-        helper.setDisableSleep(true) { [weak self] _, err in
-            if let err { self?.onHelperMessage?(err) }
+        if enabledModes.contains(.lidClosed) {
+            helper.setDisableSleep(true) { [weak self] _, err in
+                if let err { self?.onHelperMessage?(err) }
+            }
         }
         onChange?()
     }
@@ -199,31 +264,45 @@ final class SleepManager {
     // MARK: - IOKit power assertions
 
     private func createAssertions() {
-        let reason = "Newt — keep awake" as CFString
-        // Mirrors `caffeinate -dis` (`-m` disk-idle has no public IOKit
-        // assertion; even `caffeinate -m` reaches into private internals.
-        // `-u` is a one-shot "declare user active" that only matters when
-        // the display is asleep — irrelevant here).
-        IOPMAssertionCreateWithName(
-            kIOPMAssertionTypePreventUserIdleSystemSleep as CFString,    // -i
-            IOPMAssertionLevel(kIOPMAssertionLevelOn), reason, &systemAssertion)
-        IOPMAssertionCreateWithName(
-            kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString,   // -d
-            IOPMAssertionLevel(kIOPMAssertionLevelOn), reason, &displayAssertion)
-        IOPMAssertionCreateWithName(
-            kIOPMAssertionTypePreventSystemSleep as CFString,            // -s
-            IOPMAssertionLevel(kIOPMAssertionLevelOn), reason, &preventSystemAssertion)
+        // Maps to subsets of `caffeinate -dis` depending on which modes are
+        // enabled. `-m` disk-idle has no public IOKit assertion; `-u` is a
+        // one-shot "declare user active" pulse with no continuous mode and
+        // is not exposed as a toggle.
+        if enabledModes.contains(.systemIdle) {
+            createAssertion(kIOPMAssertionTypePreventUserIdleSystemSleep, into: &systemAssertion)
+        }
+        if enabledModes.contains(.display) {
+            createAssertion(kIOPMAssertionTypePreventUserIdleDisplaySleep, into: &displayAssertion)
+        }
+        if enabledModes.contains(.system) {
+            createAssertion(kIOPMAssertionTypePreventSystemSleep, into: &preventSystemAssertion)
+        }
         assertionsActive = true
+    }
+
+    private func createAssertion(_ type: String, into id: inout IOPMAssertionID) {
+        IOPMAssertionCreateWithName(
+            type as CFString,
+            IOPMAssertionLevel(kIOPMAssertionLevelOn),
+            "Newt — keep awake" as CFString,
+            &id)
+    }
+
+    /// Add or drop a single assertion while keep-awake is engaged.
+    private func applyAssertion(_ mode: WakeMode, on: Bool,
+                                id: inout IOPMAssertionID, type: String) {
+        if on {
+            if id == 0 { createAssertion(type, into: &id) }
+        } else {
+            if id != 0 { IOPMAssertionRelease(id); id = 0 }
+        }
     }
 
     private func releaseAssertions() {
         guard assertionsActive else { return }
-        IOPMAssertionRelease(systemAssertion)
-        IOPMAssertionRelease(displayAssertion)
-        IOPMAssertionRelease(preventSystemAssertion)
-        systemAssertion = 0
-        displayAssertion = 0
-        preventSystemAssertion = 0
+        if systemAssertion != 0         { IOPMAssertionRelease(systemAssertion);         systemAssertion = 0 }
+        if displayAssertion != 0        { IOPMAssertionRelease(displayAssertion);        displayAssertion = 0 }
+        if preventSystemAssertion != 0  { IOPMAssertionRelease(preventSystemAssertion);  preventSystemAssertion = 0 }
         assertionsActive = false
     }
 }

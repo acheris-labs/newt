@@ -15,6 +15,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private var loginItem: NSMenuItem!
     private var autoUpdateItem: NSMenuItem!
     private var messageItem: NSMenuItem!
+    private var wakeModeItems: [WakeMode: NSMenuItem] = [:]
 
     /// Ticks the remaining-time label while the menu is open.
     private var menuTickTimer: Timer?
@@ -68,6 +69,22 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
+        // "Wake modes" submenu — toggles for the individual IOKit assertions
+        // and the helper's lid-close override.
+        let wakeModesItem = NSMenuItem(title: "Wake modes", action: nil, keyEquivalent: "")
+        let wakeModesSub = NSMenu()
+        for mode in WakeMode.allCases {
+            let item = NSMenuItem(title: mode.menuTitle,
+                                  action: #selector(toggleWakeMode(_:)),
+                                  keyEquivalent: "")
+            item.target = self
+            item.representedObject = mode.rawValue
+            wakeModesSub.addItem(item)
+            wakeModeItems[mode] = item
+        }
+        wakeModesItem.submenu = wakeModesSub
+        menu.addItem(wakeModesItem)
+
         loginItem = NSMenuItem(title: "Open at Login",
                                action: #selector(toggleLogin),
                                keyEquivalent: "")
@@ -112,6 +129,13 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         refresh()
     }
 
+    @objc private func toggleWakeMode(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let mode = WakeMode(rawValue: raw) else { return }
+        clearMessage()
+        sleep.setMode(mode, enabled: !sleep.isEnabled(mode))
+    }
+
     @objc private func toggleAutoUpdate() {
         let now = updater.updater.automaticallyChecksForUpdates
         updater.updater.automaticallyChecksForUpdates = !now
@@ -140,6 +164,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         batterySliderView?.refresh(value: sleep.batteryThresholdPercent)
         loginItem.state = login.isEnabled ? .on : .off
         autoUpdateItem?.state = updater.updater.automaticallyChecksForUpdates ? .on : .off
+        for (mode, item) in wakeModeItems {
+            item.state = sleep.isEnabled(mode) ? .on : .off
+        }
     }
 
     private func showMessage(_ text: String) {
@@ -174,6 +201,14 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     func menuDidClose(_ menu: NSMenu) {
         menuTickTimer?.invalidate()
         menuTickTimer = nil
+        // If the user was mid-drag and the mouse left the menu, the slider's
+        // mouse-up never fires, so `sliderChanged` is skipped and the visual
+        // position would otherwise snap back on next refresh. Commit the
+        // slider's current visible value if it diverges from stored state.
+        let visual = durationSliderView.currentPosition
+        if visual != sleep.sliderPosition {
+            sleep.setSliderPosition(visual)
+        }
     }
 }
 
@@ -223,6 +258,10 @@ final class DurationSliderView: NSView {
     }
 
     required init?(coder: NSCoder) { nil }
+
+    /// The slider's live integer position. Updates during a drag even with
+    /// `isContinuous = false` — only action dispatch is suppressed.
+    var currentPosition: Int { slider.integerValue }
 
     /// Sync from external state (e.g. expiry timer fired → slider returns to 0,
     /// or battery dropped below the floor → slider goes disabled).
