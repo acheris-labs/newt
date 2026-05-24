@@ -133,11 +133,39 @@ jobs:
             git push origin "$TAG"
           fi
 
+      # Extract the matching CHANGELOG.md section for this version. Falls back
+      # to GitHub's --generate-notes if no entry exists, so a missing changelog
+      # block doesn't break a release.
+      - name: Extract release notes from CHANGELOG.md
+        id: notes
+        run: |
+          VERSION="${{ steps.v.outputs.version }}"
+          NOTES_FILE="$RUNNER_TEMP/release-notes.md"
+          if [ -f CHANGELOG.md ]; then
+            awk -v ver="$VERSION" '
+              $0 ~ "^## \\[" ver "\\]" { found=1; next }
+              found && /^## \[/        { exit }
+              found                    { print }
+            ' CHANGELOG.md > "$NOTES_FILE"
+          fi
+          if [ -s "$NOTES_FILE" ]; then
+            echo "path=$NOTES_FILE" >> "$GITHUB_OUTPUT"
+            echo "→ using CHANGELOG.md section for $VERSION"
+          else
+            echo "path=" >> "$GITHUB_OUTPUT"
+            echo "→ no CHANGELOG entry for $VERSION; will fall back to --generate-notes"
+          fi
+
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          ARGS=(--generate-notes --title "Newt ${{ steps.v.outputs.version }}")
+          ARGS=(--title "Newt ${{ steps.v.outputs.version }}")
+          if [ -n "${{ steps.notes.outputs.path }}" ]; then
+            ARGS+=(--notes-file "${{ steps.notes.outputs.path }}")
+          else
+            ARGS+=(--generate-notes)
+          fi
           if [ "${{ steps.v.outputs.prerelease }}" = "true" ]; then
             ARGS+=(--prerelease)
           fi
