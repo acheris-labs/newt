@@ -10,11 +10,66 @@ final class HelperClient {
         SMAppService.daemon(plistName: plistName)
     }
 
-    /// Register the helper at launch (no menu click needed) and log the
-    /// outcome for diagnostics.
+    /// Register the helper at launch (no menu click needed), then verify the
+    /// running helper is the version we shipped with. Sparkle (or a manual
+    /// reinstall) can replace the app bundle out from under a still-running
+    /// helper daemon — `launchd` keeps the old process alive, but its backing
+    /// file has been swapped, so XPC code-signature validation against it
+    /// later fails with `NSXPCConnectionInvalid`. The version handshake
+    /// detects this and bounces the helper before the user sees an error.
     func prepare(completion: @escaping (String?) -> Void) {
-        let message = ensureRegistered()
-        completion(message)
+        if let message = ensureRegistered() {
+            completion(message)
+            return
+        }
+        verifyHelperVersion(completion: completion)
+    }
+
+    /// XPC-ping the helper for its version. On mismatch or any XPC error,
+    /// bounce the daemon via `SMAppService` unregister+register so `launchd`
+    /// respawns it from the current on-disk binary.
+    private func verifyHelperVersion(completion: @escaping (String?) -> Void) {
+        let conn = currentConnection()
+        let proxy = conn.remoteObjectProxyWithErrorHandler { [weak self] error in
+            NSLog("Newt: getVersion XPC failed (\((error as NSError).domain) \((error as NSError).code)) — bouncing helper")
+            self?.bounceHelper(reason: "xpc-error", completion: completion)
+        } as? HelperProtocol
+
+        guard let proxy else {
+            NSLog("Newt: getVersion proxy was nil — bouncing helper")
+            bounceHelper(reason: "nil-proxy", completion: completion)
+            return
+        }
+        proxy.getVersion { [weak self] runningVersion in
+            if runningVersion == HelperConstants.version {
+                NSLog("Newt: helper version ok (\(runningVersion))")
+                DispatchQueue.main.async { completion(nil) }
+            } else {
+                NSLog("Newt: helper version mismatch — running=\(runningVersion) bundled=\(HelperConstants.version) — bouncing")
+                self?.bounceHelper(reason: "version-mismatch", completion: completion)
+            }
+        }
+    }
+
+    /// Drop the cached XPC connection and force `SMAppService` to re-submit
+    /// the helper. `unregister()` is synchronous and only returns once
+    /// `launchd` has torn down the running daemon; `register()` then
+    /// re-submits the disposition pointing at the (now-current) bundle path.
+    /// The next caller of `setDisableSleep` will lazily reconnect.
+    private func bounceHelper(reason: String, completion: @escaping (String?) -> Void) {
+        connection?.invalidate()
+        connection = nil
+        do {
+            try service.unregister()
+            try service.register()
+            NSLog("Newt: bounced helper (\(reason)) — status now \(service.status.rawValue)")
+            DispatchQueue.main.async { completion(nil) }
+        } catch {
+            NSLog("Newt: bounce failed (\(reason)): \(error)")
+            DispatchQueue.main.async {
+                completion("Could not refresh the helper: \(error.localizedDescription)")
+            }
+        }
     }
 
     /// Ensure the helper daemon is registered and enabled. Returns nil when
@@ -57,19 +112,46 @@ final class HelperClient {
             return
         }
         let conn = currentConnection()
-        let proxy = conn.remoteObjectProxyWithErrorHandler { error in
+        let proxy = conn.remoteObjectProxyWithErrorHandler { [weak self] error in
+            let message = self?.xpcErrorMessage(error) ?? "Helper connection error."
             DispatchQueue.main.async {
-                reply(false, "Helper connection error: \(error.localizedDescription)")
+                reply(false, message)
             }
         } as? HelperProtocol
 
         guard let proxy else {
+            NSLog("Newt: XPC proxy was nil (interface mismatch?) status=\(service.status.rawValue)")
             reply(false, "Could not reach the helper.")
             return
         }
         proxy.setDisableSleep(enabled) { ok, err in
             DispatchQueue.main.async { reply(ok, err) }
         }
+    }
+
+    /// Build the menu message for an XPC error and log full detail (domain,
+    /// code, current `SMAppService` status) to Console for diagnosis.
+    private func xpcErrorMessage(_ error: Error) -> String {
+        let ns = error as NSError
+        let statusAtFailure = service.status
+        NSLog("Newt: XPC error domain=\(ns.domain) code=\(ns.code) status=\(statusAtFailure.rawValue) desc=\(ns.localizedDescription)")
+
+        let suffix: String
+        if ns.domain == NSCocoaErrorDomain {
+            switch ns.code {
+            case 4097: suffix = "helper not running — relaunch Newt"
+            case 4099: suffix = "helper crashed — try again"
+            case 4101: suffix = "helper replied with invalid data"
+            default:   suffix = "\(ns.localizedDescription) (code \(ns.code))"
+            }
+        } else {
+            suffix = "\(ns.localizedDescription) (\(ns.domain) \(ns.code))"
+        }
+
+        if statusAtFailure != .enabled {
+            return "Helper connection error: \(suffix) [status \(statusAtFailure.rawValue)]"
+        }
+        return "Helper connection error: \(suffix)"
     }
 
     private func currentConnection() -> NSXPCConnection {

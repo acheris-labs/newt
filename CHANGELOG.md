@@ -11,6 +11,21 @@ auto-update prompt.
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-05-25
+
+### Fixed
+- **"Helper connection error: Couldn't communicate with a helper
+  application."** after a Sparkle auto-update. `launchd` keeps the
+  privileged helper daemon alive across app-bundle replacement, so the
+  newly-installed app would end up talking to a helper process whose
+  backing binary had been swapped underneath it; subsequent XPC code-
+  signature validation against that stale process fails with
+  `NSXPCConnectionInvalid`. Newt now performs a version handshake with
+  the helper at launch and, on mismatch or any XPC error, bounces the
+  daemon via `SMAppService` unregister+register so it respawns from the
+  current on-disk binary. Recovery is silent — users no longer see the
+  error message.
+
 ## [0.2.2] - 2026-05-24
 
 ### Added
@@ -115,7 +130,8 @@ Initial public release.
   `SMAppService.daemon(plistName:)`.
 - Lizard menu bar icon (filled when engaged, outline when idle).
 
-[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/acheris-labs/newt/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/acheris-labs/newt/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/acheris-labs/newt/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/acheris-labs/newt/compare/v0.1.3...v0.2.0
