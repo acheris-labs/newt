@@ -35,6 +35,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             button.target = self
             button.action = #selector(statusItemClicked(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            // Hover tooltip showing remaining time while keep-awake is engaged.
+            // Using the owner-callback form so the string is computed at the
+            // moment AppKit shows the tooltip — no timer needed to keep it
+            // fresh. An empty return suppresses the tooltip when not engaged.
+            button.addToolTip(button.bounds, owner: self, userData: nil)
         }
         sleep.onChange = { [weak self] in self?.refresh() }
         sleep.onHelperMessage = { [weak self] msg in self?.showMessage(msg) }
@@ -257,6 +262,17 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private func clearMessage() {
         messageItem.title = ""
         messageItem.isHidden = true
+    }
+
+    // MARK: - NSView tooltip owner
+
+    /// Called by AppKit each time the status-item tooltip is about to appear,
+    /// so the string is always current. Empty string suppresses the tooltip.
+    @objc func view(_ view: NSView,
+                    stringForToolTip tag: NSView.ToolTipTag,
+                    point: NSPoint,
+                    userData: UnsafeMutableRawPointer?) -> String {
+        sleep.isActive ? sleep.displayString() : ""
     }
 
     // MARK: - NSMenuDelegate

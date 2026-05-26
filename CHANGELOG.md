@@ -11,6 +11,16 @@ auto-update prompt.
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-05-26
+
+### Added
+- **Hover tooltip showing remaining time.** While keep-awake is engaged,
+  hovering the menu bar icon now reveals the current remaining time
+  (`1h 23m`, `45m 12s`, or `indefinite`) without having to open the
+  menu. The tooltip is computed at hover time, so it always reflects
+  the live remaining duration. When keep-awake is off, no tooltip
+  appears.
+
 ## [0.2.3] - 2026-05-25
 
 ### Fixed
@@ -130,7 +140,8 @@ Initial public release.
   `SMAppService.daemon(plistName:)`.
 - Lizard menu bar icon (filled when engaged, outline when idle).
 
-[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/acheris-labs/newt/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/acheris-labs/newt/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/acheris-labs/newt/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/acheris-labs/newt/compare/v0.2.0...v0.2.1
