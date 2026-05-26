@@ -35,15 +35,18 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             button.target = self
             button.action = #selector(statusItemClicked(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-            // Hover tooltip showing remaining time while keep-awake is engaged.
-            // Using the owner-callback form so the string is computed at the
-            // moment AppKit shows the tooltip — no timer needed to keep it
-            // fresh. An empty return suppresses the tooltip when not engaged.
-            button.addToolTip(button.bounds, owner: self, userData: nil)
         }
         sleep.onChange = { [weak self] in self?.refresh() }
         sleep.onHelperMessage = { [weak self] msg in self?.showMessage(msg) }
         refresh()
+        // Hover tooltip showing remaining time while keep-awake is engaged.
+        // Registered *after* the first refresh so `button.bounds` reflects the
+        // icon size — registering against `.zero` at init time silently fails.
+        // Owner-callback form so the string is computed at hover time; an
+        // empty return suppresses the tooltip when not engaged.
+        if let button = statusItem.button {
+            button.addToolTip(button.bounds, owner: self, userData: nil)
+        }
         sleep.prepareHelper()
         // First run defaults to Open at Login — afterward, respect the user.
         if let msg = login.bootstrapDefaultIfNeeded() { showMessage(msg) }

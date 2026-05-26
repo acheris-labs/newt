@@ -11,6 +11,16 @@ auto-update prompt.
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-05-26
+
+### Fixed
+- **Hover tooltip from v0.2.4 didn't actually appear.** The tooltip
+  rectangle was registered before the menu bar icon was set, so
+  `button.bounds` was `.zero` and the mouse never landed inside the
+  registered hit region. Registration now happens after the first
+  refresh, when the icon (and therefore the button's bounds) is in
+  place.
+
 ## [0.2.4] - 2026-05-26
 
 ### Added
@@ -140,7 +150,8 @@ Initial public release.
   `SMAppService.daemon(plistName:)`.
 - Lizard menu bar icon (filled when engaged, outline when idle).
 
-[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.2.4...HEAD
+[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.2.5...HEAD
+[0.2.5]: https://github.com/acheris-labs/newt/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/acheris-labs/newt/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/acheris-labs/newt/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/acheris-labs/newt/compare/v0.2.1...v0.2.2
