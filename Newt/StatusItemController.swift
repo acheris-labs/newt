@@ -64,7 +64,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         // Keep-awake slider — the primary control.
         durationSliderView = DurationSliderView(
             initialPosition: sleep.sliderPosition,
-            initialText:     sleep.displayString()
+            initialText:     sleep.displayString(),
+            textForPosition: { SleepManager.displayString(forSliderPosition: $0) }
         ) { [weak self] pos in
             self?.clearMessage()
             self?.sleep.setSliderPosition(pos)
@@ -121,7 +122,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         fixedClickSliderView = DurationSliderView(
             title: "On for",
             initialPosition: sleep.fixedClickSliderPosition,
-            initialText: SleepManager.displayString(forSliderPosition: sleep.fixedClickSliderPosition)
+            initialText: SleepManager.displayString(forSliderPosition: sleep.fixedClickSliderPosition),
+            textForPosition: { SleepManager.displayString(forSliderPosition: $0) }
         ) { [weak self] pos in
             let p = max(1, pos)  // option 3 must engage something
             self?.sleep.fixedClickSliderPosition = p
@@ -301,12 +303,20 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menuTickTimer?.invalidate()
         menuTickTimer = nil
         // If the user was mid-drag and the mouse left the menu, the slider's
-        // mouse-up never fires, so `sliderChanged` is skipped and the visual
-        // position would otherwise snap back on next refresh. Commit the
-        // slider's current visible value if it diverges from stored state.
+        // mouse-up never fires, so commit the slider's current visible value
+        // if it diverges from stored state. Then clear the drag flag so the
+        // next refresh resumes normal sync.
         let visual = durationSliderView.currentPosition
         if visual != sleep.sliderPosition {
             sleep.setSliderPosition(visual)
+        }
+        durationSliderView.endDragIfNeeded()
+        if let fixed = fixedClickSliderView {
+            let fixedVisual = max(1, fixed.currentPosition)
+            if fixedVisual != sleep.fixedClickSliderPosition {
+                sleep.fixedClickSliderPosition = fixedVisual
+            }
+            fixed.endDragIfNeeded()
         }
     }
 }
@@ -322,11 +332,19 @@ final class DurationSliderView: NSView {
     private let valueLabel: NSTextField
     private let titleLabel: NSTextField
     private let onChange: (Int) -> Void
+    private let textForPosition: (Int) -> String
+    /// True between a `.leftMouseDown` and the corresponding `.leftMouseUp`
+    /// (or `endDragIfNeeded()` if the menu closes mid-drag). While set, the
+    /// label and thumb are owned by the live drag — external `refresh()`
+    /// skips them so the menu's 1Hz tick timer can't snap the thumb back.
+    private var isDragging = false
 
     init(title: String = "Keep awake",
          initialPosition: Int, initialText: String,
+         textForPosition: @escaping (Int) -> String,
          onChange: @escaping (Int) -> Void) {
         self.onChange = onChange
+        self.textForPosition = textForPosition
         self.slider = NSSlider(value: Double(initialPosition),
                                minValue: 0, maxValue: 10,
                                target: nil, action: nil)
@@ -346,40 +364,62 @@ final class DurationSliderView: NSView {
         valueLabel.frame = NSRect(x: 110, y: 24, width: 116, height: 16)
         addSubview(valueLabel)
 
-        // Snap to ticks; only commit on release so dragging across positions
-        // doesn't churn the helper / IOPMAssertions on each intermediate tick.
+        // Continuous so the action fires on every tick crossed during drag —
+        // the handler shows a live preview in the value label. Commit (the
+        // expensive `onChange` that touches the helper / IOPMAssertions) is
+        // gated on mouse-up via `NSApp.currentEvent.type` so a drag across
+        // positions still results in exactly one commit at release.
         slider.target = self
         slider.action = #selector(sliderChanged(_:))
         slider.numberOfTickMarks = 11
         slider.allowsTickMarkValuesOnly = true
-        slider.isContinuous = false
+        slider.isContinuous = true
         slider.frame = NSRect(x: 14, y: 4, width: 212, height: 18)
         addSubview(slider)
     }
 
     required init?(coder: NSCoder) { nil }
 
-    /// The slider's live integer position. Updates during a drag even with
-    /// `isContinuous = false` — only action dispatch is suppressed.
+    /// The slider's live integer position. Updates continuously during a drag.
     var currentPosition: Int { slider.integerValue }
 
     /// Sync from external state (e.g. expiry timer fired → slider returns to 0,
-    /// or battery dropped below the floor → slider goes disabled).
+    /// or battery dropped below the floor → slider goes disabled). Skipped for
+    /// thumb/label while a drag is in progress so we don't fight the user.
     func refresh(position: Int, displayText: String, enabled: Bool) {
-        if slider.integerValue != position {
-            slider.integerValue = position
-        }
         slider.isEnabled = enabled
         let color: NSColor = enabled ? .secondaryLabelColor : .tertiaryLabelColor
         titleLabel.textColor = color
         valueLabel.textColor = color
+        guard !isDragging else { return }
+        if slider.integerValue != position {
+            slider.integerValue = position
+        }
         valueLabel.stringValue = displayText
     }
 
+    /// Called by `menuDidClose` after committing the visual position — clears
+    /// the drag flag so the next `refresh()` resumes normal syncing. If the
+    /// menu closed mid-drag the mouse-up event never reached us.
+    func endDragIfNeeded() {
+        isDragging = false
+    }
+
     @objc private func sliderChanged(_ sender: NSSlider) {
-        let v = Int(sender.doubleValue.rounded())
-        sender.integerValue = v
-        onChange(v)
+        let pos = Int(sender.doubleValue.rounded())
+        sender.integerValue = pos
+        // Always reflect the would-be value in the label, even mid-drag.
+        valueLabel.stringValue = textForPosition(pos)
+        // Mouse-driven drag fires action with .leftMouseDown / .leftMouseDragged
+        // during the drag and .leftMouseUp on release. Keyboard arrows arrive
+        // as .keyDown and should commit on each press (matches prior behavior).
+        switch NSApp.currentEvent?.type {
+        case .leftMouseDown, .leftMouseDragged:
+            isDragging = true
+        default:
+            isDragging = false
+            onChange(pos)
+        }
     }
 }
 

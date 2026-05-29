@@ -11,6 +11,19 @@ auto-update prompt.
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-05-29
+
+### Changed
+- **Duration sliders preview the value live while dragging.** The
+  "Keep awake" and "On for" sliders have geometric stops (`off`, `1m`,
+  `15m`, `30m`, `1h`, `2h`, `4h`, `8h`, `16h`, `24h`, `indefinite`), so
+  the position under the thumb mid-drag didn't tell you which value
+  you were about to land on — the label only updated once you released.
+  Now the value label updates as you cross each tick, showing what the
+  position represents. The expensive commit path (helper XPC,
+  IOPMAssertions, `pmset`) still runs exactly once per drag, on
+  mouse-up — dragging across positions does not churn assertions.
+
 ## [0.2.5] - 2026-05-26
 
 ### Fixed
@@ -150,7 +163,8 @@ Initial public release.
   `SMAppService.daemon(plistName:)`.
 - Lizard menu bar icon (filled when engaged, outline when idle).
 
-[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.2.5...HEAD
+[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.2.6...HEAD
+[0.2.6]: https://github.com/acheris-labs/newt/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/acheris-labs/newt/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/acheris-labs/newt/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/acheris-labs/newt/compare/v0.2.2...v0.2.3
