@@ -52,23 +52,62 @@ final class SleepManager {
     /// Seconds chosen for the active timed session, for menu checkmarks.
     private(set) var activeDurationSeconds: Int = 0
 
-    /// Slider duration table. Index = slider position (0…10).
+    /// Slider duration table. Index = slider position (0…15). Mostly linear
+    /// 2-hour ladder from 4h up, with a 30m/1h/2h ramp for nap-length awakes.
     ///   0  → off (sentinel, never used as a duration)
     ///   -1 → indefinite (sentinel)
     ///   N  → seconds for that timed step.
     static let sliderDurations: [Int] = [
-        0,             // 0  off
-        60,            // 1  1 min
-        15 * 60,       // 2  15 min
-        30 * 60,       // 3  30 min
-        60 * 60,       // 4  1 h
-        2  * 3600,     // 5  2 h
-        4  * 3600,     // 6  4 h
-        8  * 3600,     // 7  8 h
-        16 * 3600,     // 8  16 h
-        24 * 3600,     // 9  24 h
-        -1             // 10 indefinite
+        0,             // 0   off
+        30 * 60,       // 1   30 min
+        60 * 60,       // 2   1 h
+        2  * 3600,     // 3   2 h
+        4  * 3600,     // 4   4 h
+        6  * 3600,     // 5   6 h
+        8  * 3600,     // 6   8 h
+        10 * 3600,     // 7   10 h
+        12 * 3600,     // 8   12 h
+        14 * 3600,     // 9   14 h
+        16 * 3600,     // 10  16 h
+        18 * 3600,     // 11  18 h
+        20 * 3600,     // 12  20 h
+        22 * 3600,     // 13  22 h
+        24 * 3600,     // 14  24 h
+        -1             // 15  indefinite
     ]
+
+    /// The pre-v0.2.7 11-stop geometric table — kept only to remap stored
+    /// `LastUsedSliderPosition` / `FixedClickSliderPosition` on first launch
+    /// of the new schema. Never read after migration completes.
+    private static let legacySliderDurations: [Int] = [
+        0, 60, 15 * 60, 30 * 60, 60 * 60, 2 * 3600,
+        4 * 3600, 8 * 3600, 16 * 3600, 24 * 3600, -1
+    ]
+
+    /// Remap stored slider positions from the legacy 11-stop table to the new
+    /// 16-stop one. Runs at most once per machine, gated by `SliderTableVersion`.
+    private static func migrateSliderPositionsIfNeeded() {
+        let d = UserDefaults.standard
+        if d.integer(forKey: "SliderTableVersion") >= 1 { return }
+        for key in ["LastUsedSliderPosition", "FixedClickSliderPosition"] {
+            guard let old = d.object(forKey: key) as? Int else { continue }
+            let idx = max(0, min(legacySliderDurations.count - 1, old))
+            let seconds = legacySliderDurations[idx]
+            d.set(remapLegacyDuration(seconds: seconds), forKey: key)
+        }
+        d.set(1, forKey: "SliderTableVersion")
+    }
+
+    /// Map a legacy duration (seconds) to its position in the new table.
+    /// Exact match preferred; otherwise closest non-sentinel stop (e.g. legacy
+    /// 1m / 15m collapse to the new 30m minimum).
+    private static func remapLegacyDuration(seconds: Int) -> Int {
+        if seconds == 0  { return 0 }
+        if seconds == -1 { return sliderDurations.count - 1 }
+        if let exact = sliderDurations.firstIndex(of: seconds) { return exact }
+        let timed = sliderDurations.enumerated().filter { $0.element > 0 }
+        return timed.min { abs($0.element - seconds) < abs($1.element - seconds) }!.offset
+    }
 
     /// Current slider position 0…10. The slider is the single on/off control;
     /// 0 = off, 1–9 = timed, 10 = indefinite. Reset to 0 on disengage.
@@ -108,15 +147,16 @@ final class SleepManager {
     /// Left-click behavior. Default `.openMenu` preserves prior UX on upgrade.
     private(set) var leftClickAction: LeftClickAction = .openMenu
 
-    /// Last slider position the user successfully engaged at (1…10). Used by
-    /// the `.toggleLast` left-click action. Defaults to 6 (4h).
-    private(set) var lastUsedSliderPosition: Int = 6
+    /// Last slider position the user successfully engaged at. Used by
+    /// the `.toggleLast` left-click action. Defaults to position 4 (4h).
+    private(set) var lastUsedSliderPosition: Int = 4
 
-    /// Slider position used by the `.toggleFixed` left-click action. Clamped to
-    /// 1…10 (no "off" — option 3 must engage something). Defaults to 6 (4h).
-    var fixedClickSliderPosition: Int = 6 {
+    /// Slider position used by the `.toggleFixed` left-click action. Clamped
+    /// to 1…(count-1) (no "off" — option 3 must engage something). Defaults
+    /// to position 4 (4h).
+    var fixedClickSliderPosition: Int = 4 {
         didSet {
-            let clamped = max(1, min(10, fixedClickSliderPosition))
+            let clamped = max(1, min(Self.sliderDurations.count - 1, fixedClickSliderPosition))
             if clamped != fixedClickSliderPosition {
                 fixedClickSliderPosition = clamped
                 return
@@ -126,6 +166,9 @@ final class SleepManager {
     }
 
     init() {
+        // Remap legacy 11-stop slider positions before reading them below.
+        Self.migrateSliderPositionsIfNeeded()
+
         let saved = UserDefaults.standard.integer(forKey: "BatteryThresholdPercent")
         battery.thresholdPercent = max(0, min(30, saved))
         battery.onTrip = { [weak self] in
@@ -145,12 +188,13 @@ final class SleepManager {
            let action = LeftClickAction(rawValue: raw) {
             leftClickAction = action
         }
+        let timedRange = 1 ... (Self.sliderDurations.count - 1)
         if let n = defaults.object(forKey: "LastUsedSliderPosition") as? Int,
-           (1...10).contains(n) {
+           timedRange.contains(n) {
             lastUsedSliderPosition = n
         }
         if let n = defaults.object(forKey: "FixedClickSliderPosition") as? Int,
-           (1...10).contains(n) {
+           timedRange.contains(n) {
             fixedClickSliderPosition = n
         }
     }

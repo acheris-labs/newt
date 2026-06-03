@@ -11,6 +11,29 @@ auto-update prompt.
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-06-02
+
+### Changed
+- **Duration slider is now a 16-stop, mostly-linear 2-hour ladder.** The
+  old 11-stop geometric ladder (`1m, 15m, 30m, 1h, 2h, 4h, 8h, 16h, 24h`)
+  made it impossible to pick anything between, say, 4h and 8h. The new
+  ladder is `off, 30m, 1h, 2h, 4h, 6h, 8h, 10h, 12h, 14h, 16h, 18h, 20h,
+  22h, 24h, indefinite` — short-nap durations stay accessible at the left
+  end, then uniform 2-hour steps to 24h. Tick spacing on the existing
+  slider width is comfortable, and the v0.2.6 live preview makes landing
+  on any specific tick easy.
+
+### Migrated
+- **Existing `LastUsedSliderPosition` / `FixedClickSliderPosition` are
+  remapped on first launch.** Stored positions point at integers in the
+  table, so a raw upgrade would silently shift their meaning (old
+  position 6 = 4h would become 8h in the new table). On first launch
+  Newt now reads the old positions, looks them up in the legacy table to
+  recover the intended seconds, and writes back the corresponding new
+  position. Legacy 1m / 15m collapse to the new 30m minimum; every
+  other legacy stop maps exactly. Gated by a `SliderTableVersion`
+  UserDefaults key so the migration runs at most once per machine.
+
 ## [0.2.6] - 2026-05-29
 
 ### Changed
@@ -163,7 +186,8 @@ Initial public release.
   `SMAppService.daemon(plistName:)`.
 - Lizard menu bar icon (filled when engaged, outline when idle).
 
-[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.2.6...HEAD
+[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.2.7...HEAD
+[0.2.7]: https://github.com/acheris-labs/newt/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/acheris-labs/newt/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/acheris-labs/newt/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/acheris-labs/newt/compare/v0.2.3...v0.2.4

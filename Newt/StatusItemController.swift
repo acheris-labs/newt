@@ -346,7 +346,8 @@ final class DurationSliderView: NSView {
         self.onChange = onChange
         self.textForPosition = textForPosition
         self.slider = NSSlider(value: Double(initialPosition),
-                               minValue: 0, maxValue: 10,
+                               minValue: 0,
+                               maxValue: Double(SleepManager.sliderDurations.count - 1),
                                target: nil, action: nil)
         self.valueLabel = NSTextField(labelWithString: initialText)
         self.titleLabel = NSTextField(labelWithString: title)
@@ -371,7 +372,7 @@ final class DurationSliderView: NSView {
         // positions still results in exactly one commit at release.
         slider.target = self
         slider.action = #selector(sliderChanged(_:))
-        slider.numberOfTickMarks = 11
+        slider.numberOfTickMarks = SleepManager.sliderDurations.count
         slider.allowsTickMarkValuesOnly = true
         slider.isContinuous = true
         slider.frame = NSRect(x: 14, y: 4, width: 212, height: 18)
