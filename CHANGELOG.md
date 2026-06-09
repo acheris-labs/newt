@@ -11,6 +11,13 @@ auto-update prompt.
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-06-09
+
+### Added
+- **About Newt** menu item (above Quit) opens the standard macOS About
+  panel — app icon, version, copyright, and an MIT-license / no-warranty
+  note — so you can tell at a glance which version you're running.
+
 ## [0.2.8] - 2026-06-09
 
 ### Security
@@ -201,7 +208,8 @@ Initial public release.
   `SMAppService.daemon(plistName:)`.
 - Lizard menu bar icon (filled when engaged, outline when idle).
 
-[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.2.8...HEAD
+[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.2.9...HEAD
+[0.2.9]: https://github.com/acheris-labs/newt/compare/v0.2.8...v0.2.9
 [0.2.8]: https://github.com/acheris-labs/newt/compare/v0.2.7...v0.2.8
 [0.2.7]: https://github.com/acheris-labs/newt/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/acheris-labs/newt/compare/v0.2.5...v0.2.6

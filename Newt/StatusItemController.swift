@@ -163,6 +163,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
+        let about = NSMenuItem(title: "About Newt",
+                               action: #selector(showAbout),
+                               keyEquivalent: "")
+        about.target = self
+        menu.addItem(about)
+
         let quit = NSMenuItem(title: "Quit Newt",
                               action: #selector(NSApplication.terminate(_:)),
                               keyEquivalent: "q")
@@ -190,6 +196,26 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         guard let raw = sender.representedObject as? String,
               let action = LeftClickAction(rawValue: raw) else { return }
         sleep.setLeftClickAction(action)
+    }
+
+    /// Standard macOS About panel. It pulls the app icon (the Newt logo), name,
+    /// version (`CFBundleShortVersionString` + `CFBundleVersion`), and copyright
+    /// (`NSHumanReadableCopyright`) from the bundle automatically; we supply the
+    /// license + no-warranty note as the credits blurb.
+    @objc private func showAbout() {
+        let blurb = "Free software under the MIT License.\n"
+            + "Provided \u{201C}as is\u{201D}, without warranty of any kind, express or implied."
+        let style = NSMutableParagraphStyle()
+        style.alignment = .center
+        let credits = NSAttributedString(string: blurb, attributes: [
+            .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+            .foregroundColor: NSColor.secondaryLabelColor,
+            .paragraphStyle: style,
+        ])
+        // A menu bar (LSUIElement) app isn't active, so the panel would open
+        // behind other windows without activating first.
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
     }
 
     /// Routes left/right mouse events on the menu bar icon. Right-click and
