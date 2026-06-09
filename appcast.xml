@@ -6,6 +6,15 @@
     <description>Updates for Newt</description>
     <language>en</language>
     <item>
+      <title>Newt 0.2.8</title>
+      <pubDate>Tue, 09 Jun 2026 18:33:02 +0000</pubDate>
+      <sparkle:version>0.2.8</sparkle:version>
+      <sparkle:shortVersionString>0.2.8</sparkle:shortVersionString>
+      <sparkle:releaseNotesLink>https://github.com/acheris-labs/newt/releases/tag/v0.2.8</sparkle:releaseNotesLink>
+      <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/acheris-labs/newt/releases/download/v0.2.8/Newt-0.2.8.dmg" sparkle:edSignature="Nd/cZpBTFs+N++XcutOjUjwxyXlUnWKKBe6BPkCbBtUZ9VrZkf6MHmS6P0jxXDQkNJ774mDAURxUbRzh1dDWCg==" length="1401239" type="application/octet-stream"/>
+    </item>
+    <item>
       <title>Newt 0.2.7</title>
       <pubDate>Wed, 03 Jun 2026 00:50:55 +0000</pubDate>
       <sparkle:version>0.2.7</sparkle:version>
