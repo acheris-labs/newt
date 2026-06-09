@@ -177,7 +177,10 @@ notarize: build
 	xcrun stapler validate $(APP)
 	@echo "notarized + stapled $(APP)"
 
-# Notarized .dmg ready to ship.
+# Notarized .dmg ready to ship. The app inside is already notarized + stapled
+# by the `notarize` dependency (covers offline first launch when copied out);
+# we then sign, notarize, and staple the DMG itself so a direct download of the
+# container passes Gatekeeper on mount without a prompt.
 dmg: notarize
 	@command -v create-dmg >/dev/null || brew install create-dmg
 	rm -rf $(BUILD)/staging && mkdir -p $(BUILD)/staging
@@ -190,7 +193,15 @@ dmg: notarize
 	  --hide-extension "$(APP_NAME).app" \
 	  --app-drop-link 400 180 \
 	  $(BUILD)/$(APP_NAME).dmg $(BUILD)/staging/
-	@echo "built $(BUILD)/$(APP_NAME).dmg"
+	# Sign the container (secure timestamp; --options runtime is inert on a DMG),
+	# then notarize and staple it so the ticket is attached to the artifact users
+	# download directly from the GitHub release.
+	codesign --force --sign "$(SIGN_ID)" --timestamp $(BUILD)/$(APP_NAME).dmg
+	xcrun notarytool submit $(BUILD)/$(APP_NAME).dmg \
+	  --keychain-profile $(NOTARY_PROFILE) --wait
+	xcrun stapler staple $(BUILD)/$(APP_NAME).dmg
+	xcrun stapler validate $(BUILD)/$(APP_NAME).dmg
+	@echo "signed + notarized + stapled $(BUILD)/$(APP_NAME).dmg"
 
 # Undo a stuck `pmset disablesleep` by hand (helper normally does this itself).
 reset-sleep:

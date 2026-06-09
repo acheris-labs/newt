@@ -159,9 +159,12 @@ final class HelperClient {
         let c = NSXPCConnection(machServiceName: HelperConstants.machServiceName,
                                 options: .privileged)
         c.remoteObjectInterface = NSXPCInterface(with: HelperProtocol.self)
-        // Only accept the genuine helper. Identifier match works under ad-hoc
-        // signing, where anchor/team-based requirements would not.
-        c.setCodeSigningRequirement("identifier \"\(HelperConstants.helperIdentifier)\"")
+        // Only accept the genuine helper. The requirement is derived from our
+        // own signature: Apple-anchored + Team-pinned for signed builds, and an
+        // identifier-only fallback under ad-hoc dev signing — see
+        // `HelperConstants.peerRequirement`.
+        c.setCodeSigningRequirement(
+            HelperConstants.peerRequirement(identifier: HelperConstants.helperIdentifier))
         c.invalidationHandler = { [weak self] in
             DispatchQueue.main.async { self?.connection = nil }
         }

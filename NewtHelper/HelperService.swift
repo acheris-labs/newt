@@ -5,9 +5,12 @@ import Foundation
 final class HelperListenerDelegate: NSObject, NSXPCListenerDelegate {
     func listener(_ listener: NSXPCListener,
                   shouldAcceptNewConnection conn: NSXPCConnection) -> Bool {
-        // Only the signed Newt app may talk to us. With ad-hoc signing the
-        // identifier is still embedded, so an identifier match is enough.
-        conn.setCodeSigningRequirement("identifier \"\(HelperConstants.appIdentifier)\"")
+        // Only the genuine Newt app may talk to us. The requirement is derived
+        // from our own signature: Apple-anchored + Team-pinned for signed
+        // builds, with an identifier-only fallback under ad-hoc dev signing —
+        // see `HelperConstants.peerRequirement`.
+        conn.setCodeSigningRequirement(
+            HelperConstants.peerRequirement(identifier: HelperConstants.appIdentifier))
 
         let service = HelperService()
         conn.exportedInterface = NSXPCInterface(with: HelperProtocol.self)

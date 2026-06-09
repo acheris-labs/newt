@@ -11,6 +11,21 @@ auto-update prompt.
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-06-09
+
+### Security
+- **Hardened the XPC peer validation between the app and the privileged
+  helper.** The connection requirement is now derived from the running
+  binary's own signature: signed builds pin the Apple anchor, bundle
+  identifier, and Team ID, so only the genuine, team-signed peer is
+  accepted in either direction. Ad-hoc local builds fall back to the prior
+  identifier-only match, so development is unaffected.
+
+### Changed
+- **The release DMG is now signed, notarized, and stapled itself** (in
+  addition to the app inside it). A DMG downloaded directly from the
+  GitHub release now passes Gatekeeper on mount without a prompt.
+
 ## [0.2.7] - 2026-06-02
 
 ### Changed
@@ -186,7 +201,8 @@ Initial public release.
   `SMAppService.daemon(plistName:)`.
 - Lizard menu bar icon (filled when engaged, outline when idle).
 
-[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.2.7...HEAD
+[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.2.8...HEAD
+[0.2.8]: https://github.com/acheris-labs/newt/compare/v0.2.7...v0.2.8
 [0.2.7]: https://github.com/acheris-labs/newt/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/acheris-labs/newt/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/acheris-labs/newt/compare/v0.2.4...v0.2.5
