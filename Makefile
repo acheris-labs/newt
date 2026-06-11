@@ -127,11 +127,11 @@ build: $(SPARKLE_FRAMEWORK)
 	# the outer bundle. Each signature must chain to its enclosing one.
 	# --preserve-metadata=entitlements keeps Sparkle Updater.app's bundled
 	# entitlements intact (they're not ours to recreate).
-	codesign --force --sign "$(SIGN_ID)" $(HARDENED) \
+	codesign --force --sign "$(SIGN_ID)" $(HARDENED) --preserve-metadata=entitlements \
 	  $(CONTENTS)/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc
-	codesign --force --sign "$(SIGN_ID)" $(HARDENED) \
+	codesign --force --sign "$(SIGN_ID)" $(HARDENED) --preserve-metadata=entitlements \
 	  $(CONTENTS)/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc
-	codesign --force --sign "$(SIGN_ID)" $(HARDENED) \
+	codesign --force --sign "$(SIGN_ID)" $(HARDENED) --preserve-metadata=entitlements \
 	  $(CONTENTS)/Frameworks/Sparkle.framework/Versions/B/Autoupdate
 	codesign --force --sign "$(SIGN_ID)" $(HARDENED) --preserve-metadata=entitlements \
 	  $(CONTENTS)/Frameworks/Sparkle.framework/Versions/B/Updater.app

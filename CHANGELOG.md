@@ -11,6 +11,16 @@ auto-update prompt.
 
 ## [Unreleased]
 
+### Security
+- **The app⇄helper connection logs an unexpected auth downgrade instead of
+  taking it silently.** If either side can't read its own code signature
+  (and so can't enforce the Team-ID-pinned requirement), it now logs the
+  fallback to identifier-only validation. Normal ad-hoc dev builds are
+  unaffected and stay quiet.
+- **Hardened the helper's `pmset` call against a pipe-buffer deadlock.** The
+  root daemon now drains the command's error output before waiting for it to
+  exit, so a full output buffer can't hang the helper.
+
 ## [0.2.9] - 2026-06-09
 
 ### Added

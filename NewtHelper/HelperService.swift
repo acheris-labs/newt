@@ -56,15 +56,20 @@ final class HelperService: NSObject, HelperProtocol {
         proc.arguments = ["-a", "disablesleep", disable ? "1" : "0"]
         let errPipe = Pipe()
         proc.standardError = errPipe
+        let errData: Data
         do {
             try proc.run()
+            // Drain stderr to EOF *before* waiting. Reading concurrently with the
+            // child means a child that fills the ~64 KB pipe buffer before exiting
+            // can't deadlock this (root) daemon; EOF arrives when pmset exits.
+            errData = errPipe.fileHandleForReading.readDataToEndOfFile()
             proc.waitUntilExit()
         } catch {
             return "could not launch pmset: \(error.localizedDescription)"
         }
         guard proc.terminationStatus == 0 else {
-            let msg = String(data: errPipe.fileHandleForReading.readDataToEndOfFile(),
-                             encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let msg = String(data: errData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             return "pmset exited \(proc.terminationStatus)\(msg.map { ": \($0)" } ?? "")"
         }
         return nil

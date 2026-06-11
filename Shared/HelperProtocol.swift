@@ -39,16 +39,39 @@ enum HelperConstants {
     /// Both binaries are signed together with one identity, so each side derives
     /// the same Team ID and demands it of the other.
     static func peerRequirement(identifier: String) -> String {
+        let fallback = "identifier \"\(identifier)\""
+
         var dyn: SecCode?
         var stat: SecStaticCode?
         var info: CFDictionary?
-        guard SecCodeCopySelf([], &dyn) == errSecSuccess, let dyn,
-              SecCodeCopyStaticCode(dyn, [], &stat) == errSecSuccess, let stat,
-              SecCodeCopySigningInformation(
-                stat, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
-              let team = (info as? [String: Any])?[kSecCodeInfoTeamIdentifier as String] as? String,
+
+        // Inspecting our *own* signature should never fail. If it does, we can't
+        // prove our Team ID, so we degrade to identifier-only auth — weaker on
+        // the privileged-helper connection. Log it: in a signed build this is an
+        // unexpected security downgrade worth seeing. (The legitimate "ad-hoc
+        // dev build, no Team ID" case below is silent — it's expected, not a
+        // failure.)
+        let selfStatus = SecCodeCopySelf([], &dyn)
+        guard selfStatus == errSecSuccess, let dyn else {
+            NSLog("Newt: peerRequirement → identifier-only; SecCodeCopySelf failed (OSStatus \(selfStatus))")
+            return fallback
+        }
+        let staticStatus = SecCodeCopyStaticCode(dyn, [], &stat)
+        guard staticStatus == errSecSuccess, let stat else {
+            NSLog("Newt: peerRequirement → identifier-only; SecCodeCopyStaticCode failed (OSStatus \(staticStatus))")
+            return fallback
+        }
+        let infoStatus = SecCodeCopySigningInformation(
+            stat, SecCSFlags(rawValue: kSecCSSigningInformation), &info)
+        guard infoStatus == errSecSuccess else {
+            NSLog("Newt: peerRequirement → identifier-only; SecCodeCopySigningInformation failed (OSStatus \(infoStatus))")
+            return fallback
+        }
+
+        guard let team = (info as? [String: Any])?[kSecCodeInfoTeamIdentifier as String] as? String,
               !team.isEmpty
-        else { return "identifier \"\(identifier)\"" }
+        else { return fallback }  // ad-hoc / unsigned dev build — expected, no log
+
         return "anchor apple generic and identifier \"\(identifier)\" "
             + "and certificate leaf[subject.OU] = \"\(team)\""
     }
