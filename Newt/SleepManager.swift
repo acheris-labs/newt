@@ -118,6 +118,7 @@ final class SleepManager {
     private var preventSystemAssertion: IOPMAssertionID = 0
     private var assertionsActive = false
     private var expiryTimer: Timer?
+    private var displayWindowTimer: Timer?
     private let helper = HelperClient()
     private let battery = BatteryMonitor()
 
@@ -143,6 +144,12 @@ final class SleepManager {
     /// Which mechanisms are enabled. Defaults to all-on on first run so the
     /// upgrade path preserves prior behavior.
     private var enabledModes: Set<WakeMode> = []
+
+    /// Time-of-day window during which "Keep display on" applies, as half-hour
+    /// indices (0…48; minute = idx*30). Default 0…48 = all day (no restriction).
+    /// Outside the window the display assertion is dropped so the display sleeps.
+    private(set) var displayWindowStart = 0
+    private(set) var displayWindowEnd = 48
 
     /// Left-click behavior. Default `.openMenu` preserves prior UX on upgrade.
     private(set) var leftClickAction: LeftClickAction = .openMenu
@@ -197,6 +204,11 @@ final class SleepManager {
            timedRange.contains(n) {
             fixedClickSliderPosition = n
         }
+        // Display-on time window (half-hour indices). Missing keys → all day.
+        let ws = defaults.object(forKey: "DisplayWindowStart") as? Int ?? 0
+        let we = defaults.object(forKey: "DisplayWindowEnd") as? Int ?? 48
+        displayWindowStart = max(0, min(47, ws))
+        displayWindowEnd = max(displayWindowStart + 1, min(48, we))
     }
 
     func setLeftClickAction(_ action: LeftClickAction) {
@@ -233,8 +245,10 @@ final class SleepManager {
 
         if isActive {
             switch mode {
-            case .display:    applyAssertion(mode, on: enabled, id: &displayAssertion,
+            case .display:    applyAssertion(mode, on: enabled && isNowInDisplayWindow(),
+                                             id: &displayAssertion,
                                              type: kIOPMAssertionTypePreventUserIdleDisplaySleep)
+                              scheduleDisplayWindowTimer()
             case .systemIdle: applyAssertion(mode, on: enabled, id: &systemAssertion,
                                              type: kIOPMAssertionTypePreventUserIdleSystemSleep)
             case .system:     applyAssertion(mode, on: enabled, id: &preventSystemAssertion,
@@ -358,6 +372,7 @@ final class SleepManager {
         activeDurationSeconds = durationSeconds
         if !assertionsActive { createAssertions() }
         scheduleExpiry()
+        scheduleDisplayWindowTimer()
         battery.enable()
         if enabledModes.contains(.lidClosed) {
             helper.setDisableSleep(true) { [weak self] _, err in
@@ -374,6 +389,8 @@ final class SleepManager {
         sliderPosition = 0
         expiryTimer?.invalidate()
         expiryTimer = nil
+        displayWindowTimer?.invalidate()
+        displayWindowTimer = nil
         battery.disable()
         releaseAssertions()
         helper.setDisableSleep(false) { _, _ in }
@@ -391,6 +408,65 @@ final class SleepManager {
         expiryTimer = t
     }
 
+    // MARK: - Display-on time window
+
+    /// True when the current local time is inside the display-on window (or the
+    /// window covers the full day).
+    func isNowInDisplayWindow() -> Bool {
+        if displayWindowStart == 0 && displayWindowEnd == 48 { return true }
+        let c = Calendar.current.dateComponents([.hour, .minute], from: Date())
+        let mins = (c.hour ?? 0) * 60 + (c.minute ?? 0)
+        return mins >= displayWindowStart * 30 && mins < displayWindowEnd * 30
+    }
+
+    private func displayWanted() -> Bool {
+        enabledModes.contains(.display) && isNowInDisplayWindow()
+    }
+
+    private var displayWindowRestricted: Bool {
+        !(displayWindowStart == 0 && displayWindowEnd == 48)
+    }
+
+    /// Add/drop the display assertion as the clock crosses the window edges.
+    private func reevaluateDisplayWindow() {
+        guard assertionsActive else { return }
+        let want = displayWanted()
+        guard want != (displayAssertion != 0) else { return }
+        applyAssertion(.display, on: want, id: &displayAssertion,
+                       type: kIOPMAssertionTypePreventUserIdleDisplaySleep)
+        onChange?()
+    }
+
+    /// Poll once a minute while engaged with a restricted window, flipping the
+    /// display assertion at the boundaries (mirrors BatteryMonitor's poll shape).
+    private func scheduleDisplayWindowTimer() {
+        displayWindowTimer?.invalidate()
+        displayWindowTimer = nil
+        guard isActive, enabledModes.contains(.display), displayWindowRestricted else { return }
+        let t = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
+            self?.reevaluateDisplayWindow()
+        }
+        RunLoop.main.add(t, forMode: .common)
+        displayWindowTimer = t
+    }
+
+    /// Set the display-on window (half-hour indices, end > start). Persists; if
+    /// engaged, re-evaluates the display assertion now and re-arms the timer.
+    func setDisplayWindow(start: Int, end: Int) {
+        let s = max(0, min(47, start))
+        let e = max(s + 1, min(48, end))
+        guard s != displayWindowStart || e != displayWindowEnd else { return }
+        displayWindowStart = s
+        displayWindowEnd = e
+        UserDefaults.standard.set(s, forKey: "DisplayWindowStart")
+        UserDefaults.standard.set(e, forKey: "DisplayWindowEnd")
+        if isActive {
+            reevaluateDisplayWindow()
+            scheduleDisplayWindowTimer()
+        }
+        onChange?()
+    }
+
     // MARK: - IOKit power assertions
 
     private func createAssertions() {
@@ -401,7 +477,7 @@ final class SleepManager {
         if enabledModes.contains(.systemIdle) {
             createAssertion(kIOPMAssertionTypePreventUserIdleSystemSleep, into: &systemAssertion)
         }
-        if enabledModes.contains(.display) {
+        if displayWanted() {
             createAssertion(kIOPMAssertionTypePreventUserIdleDisplaySleep, into: &displayAssertion)
         }
         if enabledModes.contains(.system) {

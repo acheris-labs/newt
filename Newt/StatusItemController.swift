@@ -18,6 +18,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private var wakeModeItems: [WakeMode: NSMenuItem] = [:]
     private var leftClickItems: [LeftClickAction: NSMenuItem] = [:]
     private var fixedClickSliderView: DurationSliderView!
+    private var rangeSliderView: RangeSliderView!
+    private var rangeSliderItem: NSMenuItem?
 
     /// Ticks the remaining-time label while the menu is open.
     private var menuTickTimer: Timer?
@@ -105,6 +107,22 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             item.representedObject = mode.rawValue
             configSub.addItem(item)
             wakeModeItems[mode] = item
+
+            // Directly under "Keep display on": a time-of-day window slider,
+            // shown only while that mode is enabled.
+            if mode == .display {
+                rangeSliderView = RangeSliderView(
+                    initialStart: sleep.displayWindowStart,
+                    initialEnd: sleep.displayWindowEnd
+                ) { [weak self] start, end in
+                    self?.sleep.setDisplayWindow(start: start, end: end)
+                }
+                let rangeItem = NSMenuItem()
+                rangeItem.view = rangeSliderView
+                rangeItem.isHidden = !sleep.isEnabled(.display)
+                configSub.addItem(rangeItem)
+                rangeSliderItem = rangeItem
+            }
         }
         configSub.addItem(.separator())
         let leftClickHeader = NSMenuItem(title: "Left click action", action: nil, keyEquivalent: "")
@@ -283,6 +301,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             position: sleep.fixedClickSliderPosition,
             displayText: SleepManager.displayString(forSliderPosition: sleep.fixedClickSliderPosition),
             enabled: sleep.leftClickAction == .toggleFixed)
+        rangeSliderItem?.isHidden = !sleep.isEnabled(.display)
+        rangeSliderView.refresh(start: sleep.displayWindowStart,
+                                end: sleep.displayWindowEnd,
+                                enabled: true)
     }
 
     private func showMessage(_ text: String) {
@@ -343,6 +365,13 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                 sleep.fixedClickSliderPosition = fixedVisual
             }
             fixed.endDragIfNeeded()
+        }
+        if let range = rangeSliderView {
+            if range.currentStart != sleep.displayWindowStart
+                || range.currentEnd != sleep.displayWindowEnd {
+                sleep.setDisplayWindow(start: range.currentStart, end: range.currentEnd)
+            }
+            range.endDragIfNeeded()
         }
     }
 }
@@ -447,6 +476,157 @@ final class DurationSliderView: NSView {
             isDragging = false
             onChange(pos)
         }
+    }
+}
+
+/// A dual-thumb range slider hosted in an NSMenuItem: picks the time-of-day
+/// window (half-hour steps, 0…48 → 00:00…24:00) during which "Keep display on"
+/// applies. NSSlider can't do two thumbs, so this is custom-drawn. Commits on
+/// mouse-up like DurationSliderView; refresh skips the thumbs mid-drag.
+final class RangeSliderView: NSView {
+    private let titleLabel: NSTextField
+    private let valueLabel: NSTextField
+    private let onChange: (Int, Int) -> Void
+
+    private var start: Int
+    private var end: Int
+    private var enabled = true
+    private var isDragging = false
+    private enum Thumb { case start, end }
+    private var activeThumb: Thumb = .start
+
+    private let trackMinX: CGFloat = 16
+    private let trackMaxX: CGFloat = 224
+    private let centerY: CGFloat = 13
+    private let thumbR: CGFloat = 8   // ~16pt knob, matching the system slider
+    private static let steps = 48   // 48 half-hours across 0…24h
+
+    init(initialStart: Int, initialEnd: Int,
+         onChange: @escaping (Int, Int) -> Void) {
+        self.start = initialStart
+        self.end = initialEnd
+        self.onChange = onChange
+        self.titleLabel = NSTextField(labelWithString: "Display hours")
+        self.valueLabel = NSTextField(labelWithString: "")
+        super.init(frame: NSRect(x: 0, y: 0, width: 240, height: 44))
+
+        let font = NSFont.menuFont(ofSize: 0)
+        titleLabel.font = font
+        titleLabel.textColor = .secondaryLabelColor
+        titleLabel.frame = NSRect(x: 14, y: 24, width: 100, height: 16)
+        addSubview(titleLabel)
+
+        valueLabel.font = font
+        valueLabel.alignment = .right
+        valueLabel.textColor = .secondaryLabelColor
+        valueLabel.frame = NSRect(x: 110, y: 24, width: 116, height: 16)
+        addSubview(valueLabel)
+        updateLabel()
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    /// Live thumb positions (half-hour indices), updated continuously on drag.
+    var currentStart: Int { start }
+    var currentEnd: Int { end }
+
+    /// Sync from external state; greys out when disabled. Skips thumbs/label
+    /// while dragging so the menu's 1Hz tick can't fight the user.
+    func refresh(start: Int, end: Int, enabled: Bool) {
+        self.enabled = enabled
+        let color: NSColor = enabled ? .secondaryLabelColor : .tertiaryLabelColor
+        titleLabel.textColor = color
+        valueLabel.textColor = color
+        guard !isDragging else { return }
+        self.start = start
+        self.end = end
+        updateLabel()
+        needsDisplay = true
+    }
+
+    func endDragIfNeeded() { isDragging = false }
+
+    // MARK: drawing
+
+    private func x(_ idx: Int) -> CGFloat {
+        trackMinX + CGFloat(idx) / CGFloat(Self.steps) * (trackMaxX - trackMinX)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let trackH: CGFloat = 4
+        // Groove.
+        NSColor.tertiaryLabelColor.setFill()
+        NSBezierPath(roundedRect:
+            NSRect(x: trackMinX, y: centerY - trackH / 2, width: trackMaxX - trackMinX, height: trackH),
+            xRadius: trackH / 2, yRadius: trackH / 2).fill()
+        // Selected range fill.
+        NSColor.controlAccentColor.setFill()
+        NSBezierPath(roundedRect:
+            NSRect(x: x(start), y: centerY - trackH / 2, width: x(end) - x(start), height: trackH),
+            xRadius: trackH / 2, yRadius: trackH / 2).fill()
+        // Knobs — control-face circle with a soft shadow + hairline ring, the
+        // way the system slider knob reads on the menu.
+        for cx in [x(start), x(end)] {
+            let rect = NSRect(x: cx - thumbR, y: centerY - thumbR, width: thumbR * 2, height: thumbR * 2)
+            NSGraphicsContext.saveGraphicsState()
+            let shadow = NSShadow()
+            shadow.shadowColor = NSColor.shadowColor.withAlphaComponent(0.35)
+            shadow.shadowOffset = NSSize(width: 0, height: -0.5)
+            shadow.shadowBlurRadius = 1.5
+            shadow.set()
+            NSColor.controlColor.setFill()
+            NSBezierPath(ovalIn: rect).fill()
+            NSGraphicsContext.restoreGraphicsState()
+            NSColor.separatorColor.setStroke()
+            let ring = NSBezierPath(ovalIn: rect.insetBy(dx: 0.25, dy: 0.25))
+            ring.lineWidth = 0.5
+            ring.stroke()
+        }
+    }
+
+    // MARK: mouse (commit on mouse-up)
+
+    private func index(at point: NSPoint) -> Int {
+        let frac = (point.x - trackMinX) / (trackMaxX - trackMinX)
+        return max(0, min(Self.steps, Int((frac * CGFloat(Self.steps)).rounded())))
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard enabled else { return }
+        let i = index(at: convert(event.locationInWindow, from: nil))
+        activeThumb = abs(i - start) <= abs(i - end) ? .start : .end
+        isDragging = true
+        moveActive(to: i)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard enabled, isDragging else { return }
+        moveActive(to: index(at: convert(event.locationInWindow, from: nil)))
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard isDragging else { return }
+        isDragging = false
+        onChange(start, end)
+    }
+
+    private func moveActive(to i: Int) {
+        switch activeThumb {
+        case .start: start = max(0, min(end - 1, i))
+        case .end:   end = max(start + 1, min(Self.steps, i))
+        }
+        updateLabel()
+        needsDisplay = true
+    }
+
+    private func updateLabel() { valueLabel.stringValue = Self.windowLabel(start, end) }
+
+    static func windowLabel(_ s: Int, _ e: Int) -> String {
+        if s == 0 && e == steps { return "All day" }
+        return "\(hhmm(s))–\(hhmm(e))"
+    }
+    private static func hhmm(_ idx: Int) -> String {
+        String(format: "%d:%02d", idx / 2, (idx % 2) * 30)
     }
 }
 

@@ -11,6 +11,15 @@ auto-update prompt.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-17
+
+### Added
+- **Time-of-day window for "Keep display on".** A dual slider under that wake
+  mode (shown only while it's enabled) sets the hours the display is held on,
+  in half-hour steps; the default is all day, so nothing changes unless you
+  narrow it. Outside the window the display is free to idle-off while the other
+  wake modes keep the system awake.
+
 ### Security
 - **The app⇄helper connection logs an unexpected auth downgrade instead of
   taking it silently.** If either side can't read its own code signature
@@ -218,7 +227,8 @@ Initial public release.
   `SMAppService.daemon(plistName:)`.
 - Lizard menu bar icon (filled when engaged, outline when idle).
 
-[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.2.9...HEAD
+[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/acheris-labs/newt/compare/v0.2.9...v0.3.0
 [0.2.9]: https://github.com/acheris-labs/newt/compare/v0.2.8...v0.2.9
 [0.2.8]: https://github.com/acheris-labs/newt/compare/v0.2.7...v0.2.8
 [0.2.7]: https://github.com/acheris-labs/newt/compare/v0.2.6...v0.2.7
