@@ -15,8 +15,18 @@ final class BatteryMonitor {
     /// Called on the main runloop when battery ≤ threshold while on battery.
     var onTrip: (() -> Void)?
 
+    /// Called on the main runloop when the power source flips between AC and
+    /// battery (not on routine percentage ticks). Lets callers react to
+    /// plug/unplug without polling — used to suspend/resume "Keep display on".
+    var onPowerChange: (() -> Void)?
+
     private var timer: Timer?
     private var enabled = false
+    /// Event-driven plug/unplug source, independent of the threshold poll above
+    /// (so it works even when the low-battery cutoff is off). Active while enabled.
+    private var powerSource: CFRunLoopSource?
+    /// Last observed AC state, so `onPowerChange` fires only on real flips.
+    private var lastOnAC: Bool?
 
     /// True if the Mac has an internal battery to monitor at all.
     var hasBattery: Bool { Self.read() != nil }
@@ -28,12 +38,47 @@ final class BatteryMonitor {
     func enable() {
         enabled = true
         restart()
+        startPowerNotifications()
     }
 
     func disable() {
         enabled = false
         timer?.invalidate()
         timer = nil
+        stopPowerNotifications()
+    }
+
+    deinit { stopPowerNotifications() }
+
+    // MARK: - Power-source change notifications (event-driven)
+
+    private func startPowerNotifications() {
+        guard powerSource == nil else { return }
+        lastOnAC = Self.read()?.onAC
+        let context = Unmanaged.passUnretained(self).toOpaque()
+        guard let source = IOPSNotificationCreateRunLoopSource({ ctx in
+            guard let ctx else { return }
+            Unmanaged<BatteryMonitor>.fromOpaque(ctx)
+                .takeUnretainedValue()
+                .powerSourcesChanged()
+        }, context)?.takeRetainedValue() else { return }
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        powerSource = source
+    }
+
+    private func stopPowerNotifications() {
+        guard let source = powerSource else { return }
+        CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+        powerSource = nil
+        lastOnAC = nil
+    }
+
+    /// IOPS fires on any power-source change; collapse to AC↔battery flips.
+    private func powerSourcesChanged() {
+        let now = Self.read()?.onAC
+        guard now != lastOnAC else { return }
+        lastOnAC = now
+        onPowerChange?()
     }
 
     private func restart() {

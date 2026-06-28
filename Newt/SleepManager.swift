@@ -151,6 +151,11 @@ final class SleepManager {
     private(set) var displayWindowStart = 0
     private(set) var displayWindowEnd = 48
 
+    /// When on, "Keep display on" is suspended while running on battery so the
+    /// display may sleep; it resumes on AC. Display-only — other mechanisms are
+    /// unaffected. Default off so upgrades preserve prior behavior.
+    private(set) var pauseDisplayOnBattery = false
+
     /// Left-click behavior. Default `.openMenu` preserves prior UX on upgrade.
     private(set) var leftClickAction: LeftClickAction = .openMenu
 
@@ -183,6 +188,9 @@ final class SleepManager {
             self.onHelperMessage?("Released keep-awake — battery hit \(self.battery.thresholdPercent)%")
             self.disengage()
         }
+        // Plug/unplug while engaged: suspend or resume the display assertion if
+        // "pause on battery" is on. Other mechanisms are untouched.
+        battery.onPowerChange = { [weak self] in self?.reevaluateDisplay() }
         // Load mode toggles. If a key is missing (first run / upgrade), the
         // mode defaults to on.
         let defaults = UserDefaults.standard
@@ -209,6 +217,7 @@ final class SleepManager {
         let we = defaults.object(forKey: "DisplayWindowEnd") as? Int ?? 48
         displayWindowStart = max(0, min(47, ws))
         displayWindowEnd = max(displayWindowStart + 1, min(48, we))
+        pauseDisplayOnBattery = defaults.object(forKey: "PauseDisplayOnBattery") as? Bool ?? false
     }
 
     func setLeftClickAction(_ action: LeftClickAction) {
@@ -245,7 +254,7 @@ final class SleepManager {
 
         if isActive {
             switch mode {
-            case .display:    applyAssertion(mode, on: enabled && isNowInDisplayWindow(),
+            case .display:    applyAssertion(mode, on: displayWanted(),
                                              id: &displayAssertion,
                                              type: kIOPMAssertionTypePreventUserIdleDisplaySleep)
                               scheduleDisplayWindowTimer()
@@ -420,15 +429,25 @@ final class SleepManager {
     }
 
     private func displayWanted() -> Bool {
-        enabledModes.contains(.display) && isNowInDisplayWindow()
+        guard enabledModes.contains(.display), isNowInDisplayWindow() else { return false }
+        if pauseDisplayOnBattery && isOnBattery { return false }
+        return true
+    }
+
+    /// True when running on battery (not AC). False when there's no battery or
+    /// the power source can't be read.
+    private var isOnBattery: Bool {
+        guard let snap = battery.currentSnapshot() else { return false }
+        return !snap.onAC
     }
 
     private var displayWindowRestricted: Bool {
         !(displayWindowStart == 0 && displayWindowEnd == 48)
     }
 
-    /// Add/drop the display assertion as the clock crosses the window edges.
-    private func reevaluateDisplayWindow() {
+    /// Add/drop the display assertion as its conditions change — the clock
+    /// crossing the window edges, or a plug/unplug when "pause on battery" is on.
+    private func reevaluateDisplay() {
         guard assertionsActive else { return }
         let want = displayWanted()
         guard want != (displayAssertion != 0) else { return }
@@ -444,7 +463,7 @@ final class SleepManager {
         displayWindowTimer = nil
         guard isActive, enabledModes.contains(.display), displayWindowRestricted else { return }
         let t = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
-            self?.reevaluateDisplayWindow()
+            self?.reevaluateDisplay()
         }
         RunLoop.main.add(t, forMode: .common)
         displayWindowTimer = t
@@ -461,9 +480,19 @@ final class SleepManager {
         UserDefaults.standard.set(s, forKey: "DisplayWindowStart")
         UserDefaults.standard.set(e, forKey: "DisplayWindowEnd")
         if isActive {
-            reevaluateDisplayWindow()
+            reevaluateDisplay()
             scheduleDisplayWindowTimer()
         }
+        onChange?()
+    }
+
+    /// Toggle "pause display on battery". Persists; if engaged, re-evaluates the
+    /// display assertion now for the current power state.
+    func setPauseDisplayOnBattery(_ on: Bool) {
+        guard on != pauseDisplayOnBattery else { return }
+        pauseDisplayOnBattery = on
+        UserDefaults.standard.set(on, forKey: "PauseDisplayOnBattery")
+        if isActive { reevaluateDisplay() }
         onChange?()
     }
 

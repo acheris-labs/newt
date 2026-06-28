@@ -3,7 +3,9 @@ import Sparkle
 
 /// Owns the menu bar item and its menu, and drives `SleepManager` from it.
 final class StatusItemController: NSObject, NSMenuDelegate {
-    private let statusItem = NSStatusBar.system.statusItem(
+    // `var` because the status item is recreated if macOS reaps it on wake
+    // from deep sleep — see `handleWake()`.
+    private var statusItem = NSStatusBar.system.statusItem(
         withLength: NSStatusItem.variableLength)
     private let sleep = SleepManager()
     private let login = LoginItemController()
@@ -20,15 +22,38 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private var fixedClickSliderView: DurationSliderView!
     private var rangeSliderView: RangeSliderView!
     private var rangeSliderItem: NSMenuItem?
+    private var pauseOnBatteryItem: NSMenuItem?
 
     /// Ticks the remaining-time label while the menu is open.
     private var menuTickTimer: Timer?
+
+    /// Workspace wake observer — recreates the status item if macOS reaped it.
+    private var wakeObserver: NSObjectProtocol?
 
     init(updater: SPUStandardUpdaterController) {
         self.updater = updater
         super.init()
         buildMenu()
         menu.delegate = self
+        sleep.onChange = { [weak self] in self?.refresh() }
+        sleep.onHelperMessage = { [weak self] msg in self?.showMessage(msg) }
+        configureStatusItem()
+        // macOS can reap our status item from the menu bar after deep sleep and
+        // never restore it (the process keeps running, the icon just vanishes).
+        // Recreate it on wake. NSWorkspace sleep/wake notifications post only on
+        // the *workspace* center, never the default NotificationCenter.
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in self?.handleWake() }
+        sleep.prepareHelper()
+        // First run defaults to Open at Login — afterward, respect the user.
+        if let msg = login.bootstrapDefaultIfNeeded() { showMessage(msg) }
+        refresh()
+    }
+
+    /// Wires the status item's button and hover tooltip. Shared by `init` and
+    /// `rebuildStatusItem()` so a recreated item behaves identically.
+    private func configureStatusItem() {
         // Custom click handling: left-click obeys `LeftClickAction`, right-click
         // (and Control-click) always opens the menu. We don't assign
         // `statusItem.menu` here — assigning it would short-circuit the action
@@ -38,26 +63,49 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             button.action = #selector(statusItemClicked(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
-        sleep.onChange = { [weak self] in self?.refresh() }
-        sleep.onHelperMessage = { [weak self] msg in self?.showMessage(msg) }
         refresh()
         // Hover tooltip showing remaining time while keep-awake is engaged.
         // Registered *after* the first refresh so `button.bounds` reflects the
-        // icon size — registering against `.zero` at init time silently fails.
-        // Owner-callback form so the string is computed at hover time; an
-        // empty return suppresses the tooltip when not engaged.
+        // icon size — registering against `.zero` silently fails. Owner-callback
+        // form so the string is computed at hover time; an empty return
+        // suppresses the tooltip when not engaged.
         if let button = statusItem.button {
             button.addToolTip(button.bounds, owner: self, userData: nil)
         }
-        sleep.prepareHelper()
-        // First run defaults to Open at Login — afterward, respect the user.
-        if let msg = login.bootstrapDefaultIfNeeded() { showMessage(msg) }
-        refresh()
+    }
+
+    /// On wake, rebuild the status item only if macOS dropped it. A live item's
+    /// button is hosted in an `NSStatusBarWindow`; once reaped it has no window.
+    /// Guarding on this avoids needlessly shifting the icon's menu-bar position
+    /// on every wake (the common case where nothing was reaped).
+    private func handleWake() {
+        if statusItem.button?.window == nil { rebuildStatusItem() }
+    }
+
+    /// Replaces the reaped status item with a fresh one. The menu, slider views,
+    /// and keep-awake state (`sleep`) are independent of the status item and
+    /// survive untouched; `configureStatusItem()` re-runs `refresh()` to restore
+    /// the correct icon.
+    private func rebuildStatusItem() {
+        NSStatusBar.system.removeStatusItem(statusItem)
+        statusItem = NSStatusBar.system.statusItem(
+            withLength: NSStatusItem.variableLength)
+        configureStatusItem()
     }
 
     /// Called on app termination — restores normal sleep behavior.
     func shutdown() {
+        if let token = wakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(token)
+            wakeObserver = nil
+        }
         sleep.disengage()
+    }
+
+    deinit {
+        if let token = wakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(token)
+        }
     }
 
     // MARK: - Menu construction
@@ -108,8 +156,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             configSub.addItem(item)
             wakeModeItems[mode] = item
 
-            // Directly under "Keep display on": a time-of-day window slider,
-            // shown only while that mode is enabled.
+            // Directly under "Keep display on": a time-of-day window slider.
             if mode == .display {
                 rangeSliderView = RangeSliderView(
                     initialStart: sleep.displayWindowStart,
@@ -122,6 +169,17 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                 rangeItem.isHidden = !sleep.isEnabled(.display)
                 configSub.addItem(rangeItem)
                 rangeSliderItem = rangeItem
+
+                // Battery Macs only: suspend "Keep display on" while unplugged.
+                if sleep.hasBattery {
+                    let pauseItem = NSMenuItem(title: "Pause on battery",
+                                               action: #selector(togglePauseOnBattery),
+                                               keyEquivalent: "")
+                    pauseItem.target = self
+                    pauseItem.isHidden = !sleep.isEnabled(.display)
+                    configSub.addItem(pauseItem)
+                    pauseOnBatteryItem = pauseItem
+                }
             }
         }
         configSub.addItem(.separator())
@@ -208,6 +266,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
               let mode = WakeMode(rawValue: raw) else { return }
         clearMessage()
         sleep.setMode(mode, enabled: !sleep.isEnabled(mode))
+    }
+
+    @objc private func togglePauseOnBattery() {
+        sleep.setPauseDisplayOnBattery(!sleep.pauseDisplayOnBattery)
     }
 
     @objc private func toggleLeftClickAction(_ sender: NSMenuItem) {
@@ -302,6 +364,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             displayText: SleepManager.displayString(forSliderPosition: sleep.fixedClickSliderPosition),
             enabled: sleep.leftClickAction == .toggleFixed)
         rangeSliderItem?.isHidden = !sleep.isEnabled(.display)
+        pauseOnBatteryItem?.isHidden = !sleep.isEnabled(.display)
+        pauseOnBatteryItem?.state = sleep.pauseDisplayOnBattery ? .on : .off
         rangeSliderView.refresh(start: sleep.displayWindowStart,
                                 end: sleep.displayWindowEnd,
                                 enabled: true)

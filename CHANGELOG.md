@@ -11,6 +11,23 @@ auto-update prompt.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-06-28
+
+### Added
+- **"Pause on battery" for "Keep display on".** A new checkbox under that wake
+  mode (on Macs with a battery, shown while the mode is enabled) lets the
+  display idle-off whenever you're running on battery, then resume holding it
+  on the moment you plug back in. Off by default, so nothing changes unless you
+  turn it on — and it gates only the display; the other wake modes keep the
+  system awake regardless.
+
+### Fixed
+- **Menu bar icon no longer disappears for good after sleep.** macOS can reap
+  Newt's status item on wake and never restore it — the app keeps running and
+  holding the Mac awake, but the icon vanishes with no way to reach the menu.
+  Newt now detects this on wake and recreates the icon, leaving the current
+  keep-awake session untouched.
+
 ## [0.3.0] - 2026-06-17
 
 ### Added
@@ -227,7 +244,8 @@ Initial public release.
   `SMAppService.daemon(plistName:)`.
 - Lizard menu bar icon (filled when engaged, outline when idle).
 
-[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/acheris-labs/newt/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/acheris-labs/newt/compare/v0.2.9...v0.3.0
 [0.2.9]: https://github.com/acheris-labs/newt/compare/v0.2.8...v0.2.9
 [0.2.8]: https://github.com/acheris-labs/newt/compare/v0.2.7...v0.2.8
