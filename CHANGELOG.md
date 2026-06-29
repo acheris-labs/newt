@@ -11,6 +11,13 @@ auto-update prompt.
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-06-28
+
+### Changed
+- **"Display hours" and "Pause on battery" are now indented under "Keep display
+  on"** in the Wake modes menu, so it's clear they configure that one wake mode
+  rather than standing alongside the others.
+
 ## [0.3.1] - 2026-06-28
 
 ### Added
@@ -244,7 +251,8 @@ Initial public release.
   `SMAppService.daemon(plistName:)`.
 - Lizard menu bar icon (filled when engaged, outline when idle).
 
-[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/acheris-labs/newt/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/acheris-labs/newt/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/acheris-labs/newt/compare/v0.2.9...v0.3.0
 [0.2.9]: https://github.com/acheris-labs/newt/compare/v0.2.8...v0.2.9

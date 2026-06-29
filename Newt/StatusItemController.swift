@@ -176,6 +176,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                                                action: #selector(togglePauseOnBattery),
                                                keyEquivalent: "")
                     pauseItem.target = self
+                    // Indent so it reads as a sub-option of "Keep display on"
+                    // rather than a peer of the other wake modes.
+                    pauseItem.indentationLevel = 1
                     pauseItem.isHidden = !sleep.isEnabled(.display)
                     configSub.addItem(pauseItem)
                     pauseOnBatteryItem = pauseItem
@@ -559,7 +562,9 @@ final class RangeSliderView: NSView {
     private enum Thumb { case start, end }
     private var activeThumb: Thumb = .start
 
-    private let trackMinX: CGFloat = 16
+    // Indented from the menu's left edge so the bar visually tucks under
+    // "Keep display on", matching the indented "Pause on battery" item below it.
+    private let trackMinX: CGFloat = 30
     private let trackMaxX: CGFloat = 224
     private let centerY: CGFloat = 13
     private let thumbR: CGFloat = 8   // ~16pt knob, matching the system slider
@@ -577,7 +582,7 @@ final class RangeSliderView: NSView {
         let font = NSFont.menuFont(ofSize: 0)
         titleLabel.font = font
         titleLabel.textColor = .secondaryLabelColor
-        titleLabel.frame = NSRect(x: 14, y: 24, width: 100, height: 16)
+        titleLabel.frame = NSRect(x: 28, y: 24, width: 100, height: 16)
         addSubview(titleLabel)
 
         valueLabel.font = font
