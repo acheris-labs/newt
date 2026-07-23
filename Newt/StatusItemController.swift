@@ -54,6 +54,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// Wires the status item's button and hover tooltip. Shared by `init` and
     /// `rebuildStatusItem()` so a recreated item behaves identically.
     private func configureStatusItem() {
+        // Persist the icon's menu bar position. Without an autosave name a fresh
+        // item is placed at the left end of the status area — the side a notch
+        // clips first — and any position the user drags to is forgotten on the
+        // next launch. Never rename this: the saved position is keyed off it.
+        statusItem.autosaveName = "NewtStatusItem"
         // Custom click handling: left-click obeys `LeftClickAction`, right-click
         // (and Control-click) always opens the menu. We don't assign
         // `statusItem.menu` here — assigning it would short-circuit the action
@@ -79,15 +84,41 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// Guarding on this avoids needlessly shifting the icon's menu-bar position
     /// on every wake (the common case where nothing was reaped).
     private func handleWake() {
-        if statusItem.button?.window == nil { rebuildStatusItem() }
+        restoreStatusItemIfNeeded()
     }
 
-    /// Replaces the reaped status item with a fresh one. The menu, slider views,
-    /// and keep-awake state (`sleep`) are independent of the status item and
-    /// survive untouched; `configureStatusItem()` re-runs `refresh()` to restore
-    /// the correct icon.
+    /// Re-assert the status item, preferring the cheap path. Recreating an
+    /// `NSStatusItem` churns its menu bar position — on a crowded bar that can
+    /// drop the icon into the strip a notch clips — so toggle `isVisible` first
+    /// and rebuild only if the item is genuinely gone.
+    private func restoreStatusItemIfNeeded() {
+        guard statusItem.button?.window == nil else { return }
+        statusItem.isVisible = true
+        // AppKit doesn't rehost the button synchronously, so give it a runloop
+        // turn before concluding the item is unrecoverable.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self, self.statusItem.button?.window == nil else { return }
+            self.rebuildStatusItem()
+        }
+    }
+
+    /// User-initiated recovery, called when the app is re-opened while already
+    /// running — what people try when the icon has vanished. Re-asserts
+    /// visibility, then falls back to the same repair path as wake.
+    func revealStatusItem() {
+        statusItem.isVisible = true
+        restoreStatusItemIfNeeded()
+    }
+
+    /// Last resort, when the item can't be revived in place. The menu, slider
+    /// views, and keep-awake state (`sleep`) are independent of the status item
+    /// and survive untouched; `configureStatusItem()` re-runs `refresh()` to
+    /// restore the correct icon.
     private func rebuildStatusItem() {
-        NSStatusBar.system.removeStatusItem(statusItem)
+        // Deliberately no `removeStatusItem` — that discards the autosaved
+        // position, which would defeat `autosaveName` on every rebuild. Dropping
+        // the old item's last strong reference deallocates it, and an
+        // `NSStatusItem` removes itself from the bar on dealloc anyway.
         statusItem = NSStatusBar.system.statusItem(
             withLength: NSStatusItem.variableLength)
         configureStatusItem()
