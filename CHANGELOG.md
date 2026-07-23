@@ -11,6 +11,20 @@ auto-update prompt.
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-07-23
+
+### Fixed
+- **The menu bar icon holds its position and is less likely to vanish.** Newt
+  now gives its status item a stable autosave name, so a spot you drag it to
+  persists across launches, and the wake-from-sleep recovery re-shows the
+  existing icon in place instead of recreating it — recreating could shuffle
+  the icon into the strip a notch clips on a crowded menu bar.
+
+### Added
+- **Re-opening Newt restores its menu bar icon.** Opening Newt while it's
+  already running — from Spotlight, the Dock, or /Applications — now re-asserts
+  the icon instead of doing nothing, giving you a way back if it goes missing.
+
 ## [0.3.2] - 2026-06-28
 
 ### Changed
@@ -251,7 +265,8 @@ Initial public release.
   `SMAppService.daemon(plistName:)`.
 - Lizard menu bar icon (filled when engaged, outline when idle).
 
-[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/acheris-labs/newt/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/acheris-labs/newt/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/acheris-labs/newt/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/acheris-labs/newt/compare/v0.2.9...v0.3.0
