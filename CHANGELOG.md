@@ -11,6 +11,15 @@ auto-update prompt.
 
 ## [Unreleased]
 
+### Added
+- **Notifications settings** — a new Configuration ▸ Notifications section with
+  two opt-in toggles, both off by default:
+  - *Red dot while engaged* — a red badge on the menu bar lizard whenever
+    keep-awake is on.
+  - *Notify when keep-awake expires* — a system notification when a timed
+    session's clock runs out. It fires only for that case, never on manual
+    disengage, the low-battery cutoff, an indefinite session, or quitting.
+
 ## [0.3.3] - 2026-07-23
 
 ### Fixed
