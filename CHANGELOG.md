@@ -14,11 +14,25 @@ auto-update prompt.
 ### Added
 - **Notifications settings** — a new Configuration ▸ Notifications section with
   two opt-in toggles, both off by default:
-  - *Red dot while engaged* — a red badge on the menu bar lizard whenever
+  - *Indicator dot when engaged* — a badge on the menu bar lizard whenever
     keep-awake is on.
   - *Notify when keep-awake expires* — a system notification when a timed
     session's clock runs out. It fires only for that case, never on manual
     disengage, the low-battery cutoff, an indefinite session, or quitting.
+- **Resume last state at launch** (opt-in, next to Open at Login). If Newt was
+  engaged when it last quit — or crashed — it re-engages the same way on the
+  next launch (an 8 h session starts a fresh 8 h; indefinite stays indefinite).
+  If it was off, or the session had already expired, it stays off.
+- **Slider labels show the end time too.** Dragging the main slider previews
+  both the duration and the wall-clock time it would run to ("2h 0m/20:46"),
+  and while engaged the label shows remaining time plus the end
+  ("1h 23m/20:46"). Ends that land tomorrow get a "+1" marker. The "On for"
+  slider keeps plain durations.
+- **`newt://` URL scheme** for automation (Shortcuts, cron, Raycast, …):
+  `newt://engage?minutes=240`, `newt://engage?until=17:00`, `newt://engage`
+  (last-used duration), `newt://off`, `newt://toggle`. All requests pass the
+  same battery-floor and wake-mode guards as the menu. Two Shortcuts personal
+  automations make this a weekday keep-awake schedule.
 
 ## [0.3.3] - 2026-07-23
 

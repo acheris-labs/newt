@@ -45,13 +45,13 @@ enum LeftClickAction: String, CaseIterable {
 /// User-facing notification toggles. Independent booleans (like `WakeMode`),
 /// but default OFF — they're new opt-in behavior.
 enum NotificationOption: String, CaseIterable {
-    case badgeWhenEngaged   // red dot on the menu bar icon while engaged
+    case badgeWhenEngaged   // indicator dot on the menu bar icon while engaged
     case notifyOnExpiry     // system notification when a timed clock runs out
 
     var defaultsKey: String { "Notify.\(rawValue)" }
     var menuTitle: String {
         switch self {
-        case .badgeWhenEngaged: return "Red dot while engaged"
+        case .badgeWhenEngaged: return "Indicator dot when engaged"
         case .notifyOnExpiry:   return "Notify when keep-awake expires"
         }
     }
@@ -108,15 +108,15 @@ final class SleepManager {
             guard let old = d.object(forKey: key) as? Int else { continue }
             let idx = max(0, min(legacySliderDurations.count - 1, old))
             let seconds = legacySliderDurations[idx]
-            d.set(remapLegacyDuration(seconds: seconds), forKey: key)
+            d.set(nearestPosition(forSeconds: seconds), forKey: key)
         }
         d.set(1, forKey: "SliderTableVersion")
     }
 
-    /// Map a legacy duration (seconds) to its position in the new table.
-    /// Exact match preferred; otherwise closest non-sentinel stop (e.g. legacy
-    /// 1m / 15m collapse to the new 30m minimum).
-    private static func remapLegacyDuration(seconds: Int) -> Int {
+    /// Map a duration (seconds) to its position in the table. Exact match
+    /// preferred; otherwise closest non-sentinel stop. Used by the legacy-table
+    /// migration and to snap URL-scheme sessions to a slider thumb position.
+    private static func nearestPosition(forSeconds seconds: Int) -> Int {
         if seconds == 0  { return 0 }
         if seconds == -1 { return sliderDurations.count - 1 }
         if let exact = sliderDurations.firstIndex(of: seconds) { return exact }
@@ -177,6 +177,10 @@ final class SleepManager {
     /// display may sleep; it resumes on AC. Display-only — other mechanisms are
     /// unaffected. Default off so upgrades preserve prior behavior.
     private(set) var pauseDisplayOnBattery = false
+
+    /// Re-engage at launch with whatever state Newt had when it last quit (or
+    /// was killed). Off by default. See `resumeIfNeeded()`.
+    private(set) var resumeOnLaunch = false
 
     /// Left-click behavior. Default `.openMenu` preserves prior UX on upgrade.
     private(set) var leftClickAction: LeftClickAction = .openMenu
@@ -240,6 +244,7 @@ final class SleepManager {
         displayWindowStart = max(0, min(47, ws))
         displayWindowEnd = max(displayWindowStart + 1, min(48, we))
         pauseDisplayOnBattery = defaults.object(forKey: "PauseDisplayOnBattery") as? Bool ?? false
+        resumeOnLaunch = defaults.object(forKey: "ResumeOnLaunch") as? Bool ?? false
         // Notification options — missing key → off (opt-in).
         for option in NotificationOption.allCases {
             if defaults.object(forKey: option.defaultsKey) as? Bool ?? false {
@@ -332,18 +337,12 @@ final class SleepManager {
             disengage()
             return
         }
-        if enabledModes.isEmpty {
+        if let message = canEngage() {
+            // Don't let the user arm a session the guards will refuse (e.g. a
+            // battery cutoff that would just tear it down again). Snap back to
+            // 0 and explain why.
             sliderPosition = 0
-            onHelperMessage?("Enable at least one wake mode in the menu")
-            onChange?()
-            return
-        }
-        if let blocked = blockedByBattery {
-            // Don't let the user re-arm a session that the cutoff will just
-            // tear down again. Snap back to 0 and explain why.
-            sliderPosition = 0
-            onHelperMessage?(
-                "Can't engage — battery \(blocked.percent)% is at or below your \(blocked.threshold)% floor")
+            onHelperMessage?(message)
             onChange?()
             return
         }
@@ -361,6 +360,59 @@ final class SleepManager {
         }
     }
 
+    /// nil when engaging is allowed; otherwise a user-facing refusal message.
+    /// Shared by the slider and URL-scheme entry points so the guards can't
+    /// drift apart.
+    private func canEngage() -> String? {
+        if enabledModes.isEmpty {
+            return "Enable at least one wake mode in the menu"
+        }
+        if let blocked = blockedByBattery {
+            return "Can't engage — battery \(blocked.percent)% is at or below your \(blocked.threshold)% floor"
+        }
+        return nil
+    }
+
+    /// Engage for an exact number of minutes (URL scheme). The slider thumb
+    /// snaps to the nearest stop for display; the session length is exact.
+    func engageFor(minutes: Int) {
+        let m = max(1, min(24 * 60, minutes))
+        engageTimed(until: Date().addingTimeInterval(TimeInterval(m * 60)),
+                    seconds: m * 60)
+    }
+
+    /// Engage until a wall-clock date (URL scheme). Non-future dates are a no-op.
+    func engageUntil(_ date: Date) {
+        let seconds = Int(date.timeIntervalSinceNow.rounded())
+        guard seconds > 0 else { return }
+        engageTimed(until: date, seconds: seconds)
+    }
+
+    /// Shared timed-engage path for the exact-duration entry points.
+    private func engageTimed(until: Date, seconds: Int) {
+        if let message = canEngage() {
+            onHelperMessage?(message)
+            onChange?()
+            return
+        }
+        sliderPosition = Self.nearestPosition(forSeconds: seconds)
+        lastUsedSliderPosition = sliderPosition
+        UserDefaults.standard.set(sliderPosition, forKey: "LastUsedSliderPosition")
+        engage(.timed(until: until), durationSeconds: seconds)
+    }
+
+    /// Re-engage with the state Newt had when it last stopped running.
+    /// `EngagedSliderPosition` is written on every engage/disengage, so this
+    /// survives crashes and `killall`, and an expired or manually-ended session
+    /// correctly stays off. Goes through `setSliderPosition`, so the battery
+    /// floor and wake-mode guards apply as if the user moved the slider.
+    func resumeIfNeeded() {
+        guard resumeOnLaunch, !isActive else { return }
+        let p = UserDefaults.standard.integer(forKey: "EngagedSliderPosition")
+        guard p > 0 else { return }
+        setSliderPosition(p)
+    }
+
     /// nil if engagement is allowed; otherwise the (current %, configured %)
     /// pair so the UI can explain why the slider is greyed out.
     var blockedByBattery: (percent: Int, threshold: Int)? {
@@ -373,15 +425,42 @@ final class SleepManager {
         return (snap.percent, threshold)
     }
 
-    /// Menu label for the slider: "off" / "1h 23m" (remaining) / "indefinite".
+    /// Menu label for the slider: "off" / "indefinite" / remaining + end time
+    /// ("1h 23m/20:46", "+1" marking an end that lands tomorrow).
     func displayString() -> String {
         switch state {
         case .off:        return "off"
         case .indefinite: return "indefinite"
         case .timed(let until):
-            return Self.formatRemaining(until.timeIntervalSinceNow)
+            return "\(Self.formatRemaining(until.timeIntervalSinceNow))/\(Self.clockString(until))"
         }
     }
+
+    /// Drag-preview label for a main-slider stop: duration and the wall-clock
+    /// time it would run to, e.g. "2h 0m/20:46". Only the main slider uses
+    /// this — the "On for" slider configures a *stored* duration, where an end
+    /// time computed from "now" would be stale the moment it's read.
+    func sliderLabel(forPosition p: Int) -> String {
+        let idx = max(0, min(Self.sliderDurations.count - 1, p))
+        let secs = Self.sliderDurations[idx]
+        if secs == 0  { return "off" }
+        if secs == -1 { return "indefinite" }
+        let end = Date().addingTimeInterval(TimeInterval(secs))
+        return "\(Self.formatRemaining(TimeInterval(secs)))/\(Self.clockString(end))"
+    }
+
+    /// "20:46", flight-style "+1" suffix when the date lands tomorrow (the
+    /// spelled-out "(tomorrow)" wouldn't fit beside a duration in the menu).
+    private static func clockString(_ date: Date) -> String {
+        let time = clockFormatter.string(from: date)
+        return Calendar.current.isDateInTomorrow(date) ? "\(time)+1" : time
+    }
+
+    private static let clockFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f
+    }()
 
     /// Static label for an arbitrary slider position 0…10. Used by views
     /// configuring a duration that isn't currently engaged (e.g. the fixed
@@ -419,6 +498,9 @@ final class SleepManager {
     private func engage(_ newState: AwakeState, durationSeconds: Int) {
         state = newState
         activeDurationSeconds = durationSeconds
+        // Live engagement record for "Resume last state at launch" — written on
+        // every transition (not just clean quit) so it survives crashes.
+        UserDefaults.standard.set(sliderPosition, forKey: "EngagedSliderPosition")
         if !assertionsActive { createAssertions() }
         scheduleExpiry()
         scheduleDisplayWindowTimer()
@@ -436,6 +518,7 @@ final class SleepManager {
         state = .off
         activeDurationSeconds = 0
         sliderPosition = 0
+        UserDefaults.standard.set(0, forKey: "EngagedSliderPosition")
         expiryTimer?.invalidate()
         expiryTimer = nil
         displayWindowTimer?.invalidate()
@@ -444,6 +527,15 @@ final class SleepManager {
         releaseAssertions()
         helper.setDisableSleep(false) { _, _ in }
         onChange?()
+    }
+
+    /// App-termination teardown: releases everything like `disengage()`, but
+    /// preserves the resume record — quitting while engaged must count as
+    /// "engaged at quit" for `resumeIfNeeded()`, and `disengage()` zeroes it.
+    func shutdown() {
+        let p = sliderPosition
+        disengage()
+        if p > 0 { UserDefaults.standard.set(p, forKey: "EngagedSliderPosition") }
     }
 
     private func scheduleExpiry() {
@@ -534,6 +626,14 @@ final class SleepManager {
         pauseDisplayOnBattery = on
         UserDefaults.standard.set(on, forKey: "PauseDisplayOnBattery")
         if isActive { reevaluateDisplay() }
+        onChange?()
+    }
+
+    /// Toggle "resume last state at launch". Persists.
+    func setResumeOnLaunch(_ on: Bool) {
+        guard on != resumeOnLaunch else { return }
+        resumeOnLaunch = on
+        UserDefaults.standard.set(on, forKey: "ResumeOnLaunch")
         onChange?()
     }
 
