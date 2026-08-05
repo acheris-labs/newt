@@ -15,6 +15,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private var durationSliderView: DurationSliderView!
     private var batterySliderView: BatterySliderView?
     private var loginItem: NSMenuItem!
+    private var resumeItem: NSMenuItem!
     private var autoUpdateItem: NSMenuItem!
     private var messageItem: NSMenuItem!
     private var wakeModeItems: [WakeMode: NSMenuItem] = [:]
@@ -57,6 +58,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         sleep.prepareHelper()
         // First run defaults to Open at Login — afterward, respect the user.
         if let msg = login.bootstrapDefaultIfNeeded() { showMessage(msg) }
+        sleep.resumeIfNeeded()
         refresh()
     }
 
@@ -144,7 +146,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             NSWorkspace.shared.notificationCenter.removeObserver(token)
             wakeObserver = nil
         }
-        sleep.disengage()
+        sleep.shutdown()
     }
 
     deinit {
@@ -160,7 +162,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         durationSliderView = DurationSliderView(
             initialPosition: sleep.sliderPosition,
             initialText:     sleep.displayString(),
-            textForPosition: { SleepManager.displayString(forSliderPosition: $0) }
+            textForPosition: { [weak self] in
+                self?.sleep.sliderLabel(forPosition: $0) ?? ""
+            }
         ) { [weak self] pos in
             self?.clearMessage()
             self?.sleep.setSliderPosition(pos)
@@ -279,6 +283,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         loginItem.target = self
         menu.addItem(loginItem)
 
+        resumeItem = NSMenuItem(title: "Resume last state at launch",
+                                action: #selector(toggleResume),
+                                keyEquivalent: "")
+        resumeItem.target = self
+        menu.addItem(resumeItem)
+
         menu.addItem(.separator())
 
         let checkNowItem = NSMenuItem(
@@ -332,6 +342,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     @objc private func togglePauseOnBattery() {
         sleep.setPauseDisplayOnBattery(!sleep.pauseDisplayOnBattery)
+    }
+
+    @objc private func toggleResume() {
+        sleep.setResumeOnLaunch(!sleep.resumeOnLaunch)
     }
 
     @objc private func toggleNotificationOption(_ sender: NSMenuItem) {
@@ -398,6 +412,61 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         sleep.performLeftClickToggle()
     }
 
+    // MARK: - newt:// URL scheme
+
+    /// Entry point for the `newt://` scheme (registered in Info.plist, routed
+    /// via AppDelegate). Everything goes through the same SleepManager API as
+    /// the menu, so the battery floor and wake-mode guards apply unchanged.
+    ///   newt://engage?minutes=240   engage for exactly N minutes (1…1440)
+    ///   newt://engage?until=17:00   engage until the next HH:MM occurrence
+    ///   newt://engage               engage at the last-used duration
+    ///   newt://off                  disengage
+    ///   newt://toggle               off if engaged, else last-used duration
+    func handleURL(_ url: URL) {
+        clearMessage()
+        let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        func query(_ name: String) -> String? {
+            comps?.queryItems?.first { $0.name == name }?.value
+        }
+        switch url.host {
+        case "engage":
+            if let m = query("minutes") {
+                guard let minutes = Int(m), (1...1440).contains(minutes) else {
+                    showMessage("newt:// — minutes must be 1…1440")
+                    return
+                }
+                sleep.engageFor(minutes: minutes)
+            } else if let u = query("until") {
+                guard let date = Self.nextOccurrence(ofClockTime: u) else {
+                    showMessage("newt:// — until must be HH:MM")
+                    return
+                }
+                sleep.engageUntil(date)
+            } else {
+                sleep.setSliderPosition(sleep.lastUsedSliderPosition)
+            }
+        case "off":
+            sleep.setSliderPosition(0)
+        case "toggle":
+            sleep.setSliderPosition(sleep.isActive ? 0 : sleep.lastUsedSliderPosition)
+        default:
+            showMessage("newt:// — unknown action \u{201C}\(url.host ?? "")\u{201D}")
+        }
+    }
+
+    /// "17:00" → the next Date that wall-clock time occurs (today if still
+    /// ahead, else tomorrow). nil for anything that isn't a valid HH:MM.
+    private static func nextOccurrence(ofClockTime s: String) -> Date? {
+        let parts = s.split(separator: ":")
+        guard parts.count == 2, let h = Int(parts[0]), let m = Int(parts[1]),
+              (0...23).contains(h), (0...59).contains(m) else { return nil }
+        let cal = Calendar.current
+        guard let today = cal.date(bySettingHour: h, minute: m, second: 0,
+                                   of: Date()) else { return nil }
+        if today > Date() { return today }
+        return cal.date(byAdding: .day, value: 1, to: today)
+    }
+
     @objc private func toggleAutoUpdate() {
         let now = updater.updater.automaticallyChecksForUpdates
         updater.updater.automaticallyChecksForUpdates = !now
@@ -422,6 +491,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                                    enabled: blocked == nil)
         batterySliderView?.refresh(value: sleep.batteryThresholdPercent)
         loginItem.state = login.isEnabled ? .on : .off
+        resumeItem.state = sleep.resumeOnLaunch ? .on : .off
         autoUpdateItem?.state = updater.updater.automaticallyChecksForUpdates ? .on : .off
         for (mode, item) in wakeModeItems {
             item.state = sleep.isEnabled(mode) ? .on : .off

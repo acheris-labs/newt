@@ -14,6 +14,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusController = StatusItemController(updater: updaterController)
+        // URLs that arrived before the controller existed (cold-start launch
+        // via a newt:// link) are replayed now.
+        pendingURLs.forEach { statusController?.handleURL($0) }
+        pendingURLs.removeAll()
+    }
+
+    /// newt:// URLs can be delivered before `applicationDidFinishLaunching`
+    /// when the app is cold-started by a link — buffer until the controller
+    /// exists.
+    private var pendingURLs: [URL] = []
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        let newtURLs = urls.filter { $0.scheme == "newt" }
+        guard let controller = statusController else {
+            pendingURLs += newtURLs
+            return
+        }
+        newtURLs.forEach(controller.handleURL)
     }
 
     /// A menu bar app owns no windows, so macOS does nothing by default when the
