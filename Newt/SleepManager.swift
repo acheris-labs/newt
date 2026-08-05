@@ -42,6 +42,21 @@ enum LeftClickAction: String, CaseIterable {
     }
 }
 
+/// User-facing notification toggles. Independent booleans (like `WakeMode`),
+/// but default OFF — they're new opt-in behavior.
+enum NotificationOption: String, CaseIterable {
+    case badgeWhenEngaged   // red dot on the menu bar icon while engaged
+    case notifyOnExpiry     // system notification when a timed clock runs out
+
+    var defaultsKey: String { "Notify.\(rawValue)" }
+    var menuTitle: String {
+        switch self {
+        case .badgeWhenEngaged: return "Red dot while engaged"
+        case .notifyOnExpiry:   return "Notify when keep-awake expires"
+        }
+    }
+}
+
 /// Single source of truth for keep-awake state. Engaging applies the full
 /// lidawake treatment — IOKit power assertions (idle/display sleep) plus the
 /// privileged helper's `pmset disablesleep` (lid-close sleep). Disengaging
@@ -126,6 +141,10 @@ final class SleepManager {
     var onChange: (() -> Void)?
     /// Called with a user-facing message (e.g. helper needs approval).
     var onHelperMessage: ((String) -> Void)?
+    /// Fired only when a timed session ends because its clock ran out — not on
+    /// manual disengage, battery trip, or quit. The controller decides whether
+    /// to post a system notification.
+    var onTimerExpired: (() -> Void)?
 
     var isActive: Bool { state != .off }
     var hasBattery: Bool { battery.hasBattery }
@@ -144,6 +163,9 @@ final class SleepManager {
     /// Which mechanisms are enabled. Defaults to all-on on first run so the
     /// upgrade path preserves prior behavior.
     private var enabledModes: Set<WakeMode> = []
+
+    /// Which notification options are on. Defaults to none (opt-in).
+    private var enabledNotifications: Set<NotificationOption> = []
 
     /// Time-of-day window during which "Keep display on" applies, as half-hour
     /// indices (0…48; minute = idx*30). Default 0…48 = all day (no restriction).
@@ -218,6 +240,12 @@ final class SleepManager {
         displayWindowStart = max(0, min(47, ws))
         displayWindowEnd = max(displayWindowStart + 1, min(48, we))
         pauseDisplayOnBattery = defaults.object(forKey: "PauseDisplayOnBattery") as? Bool ?? false
+        // Notification options — missing key → off (opt-in).
+        for option in NotificationOption.allCases {
+            if defaults.object(forKey: option.defaultsKey) as? Bool ?? false {
+                enabledNotifications.insert(option)
+            }
+        }
     }
 
     func setLeftClickAction(_ action: LeftClickAction) {
@@ -268,6 +296,18 @@ final class SleepManager {
                 }
             }
         }
+        onChange?()
+    }
+
+    func isNotificationEnabled(_ option: NotificationOption) -> Bool {
+        enabledNotifications.contains(option)
+    }
+
+    /// Toggle a notification option. Persists and refreshes the menu/icon.
+    func setNotificationOption(_ option: NotificationOption, enabled: Bool) {
+        guard enabled != enabledNotifications.contains(option) else { return }
+        if enabled { enabledNotifications.insert(option) } else { enabledNotifications.remove(option) }
+        UserDefaults.standard.set(enabled, forKey: option.defaultsKey)
         onChange?()
     }
 
@@ -411,6 +451,7 @@ final class SleepManager {
         expiryTimer = nil
         guard case .timed(let until) = state else { return }
         let t = Timer(fire: until, interval: 0, repeats: false) { [weak self] _ in
+            self?.onTimerExpired?()
             self?.disengage()
         }
         RunLoop.main.add(t, forMode: .common)

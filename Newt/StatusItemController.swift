@@ -23,6 +23,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private var rangeSliderView: RangeSliderView!
     private var rangeSliderItem: NSMenuItem?
     private var pauseOnBatteryItem: NSMenuItem?
+    private var notificationItems: [NotificationOption: NSMenuItem] = [:]
+    private let notifications = NotificationManager()
+    /// Re-renders the badged (non-template) icon when the menu bar flips
+    /// light/dark — a non-template image doesn't auto-retint.
+    private var appearanceObservation: NSKeyValueObservation?
 
     /// Ticks the remaining-time label while the menu is open.
     private var menuTickTimer: Timer?
@@ -37,6 +42,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.delegate = self
         sleep.onChange = { [weak self] in self?.refresh() }
         sleep.onHelperMessage = { [weak self] msg in self?.showMessage(msg) }
+        sleep.onTimerExpired = { [weak self] in
+            guard let self, self.sleep.isNotificationEnabled(.notifyOnExpiry) else { return }
+            self.notifications.postTimerEnded()
+        }
         configureStatusItem()
         // macOS can reap our status item from the menu bar after deep sleep and
         // never restore it (the process keeps running, the icon just vanishes).
@@ -76,6 +85,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         // suppresses the tooltip when not engaged.
         if let button = statusItem.button {
             button.addToolTip(button.bounds, owner: self, userData: nil)
+            // Re-render the badged (non-template) icon on light/dark menu bar
+            // flips — a non-template image won't auto-retint.
+            appearanceObservation = button.observe(\.effectiveAppearance) { [weak self] _, _ in
+                self?.refresh()
+            }
         }
     }
 
@@ -242,6 +256,20 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let fixedItem = NSMenuItem()
         fixedItem.view = fixedClickSliderView
         configSub.addItem(fixedItem)
+
+        configSub.addItem(.separator())
+        let notifyHeader = NSMenuItem(title: "Notifications", action: nil, keyEquivalent: "")
+        notifyHeader.isEnabled = false
+        configSub.addItem(notifyHeader)
+        for option in NotificationOption.allCases {
+            let item = NSMenuItem(title: option.menuTitle,
+                                  action: #selector(toggleNotificationOption(_:)),
+                                  keyEquivalent: "")
+            item.target = self
+            item.representedObject = option.rawValue
+            configSub.addItem(item)
+            notificationItems[option] = item
+        }
         configItem.submenu = configSub
         menu.addItem(configItem)
 
@@ -306,6 +334,24 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         sleep.setPauseDisplayOnBattery(!sleep.pauseDisplayOnBattery)
     }
 
+    @objc private func toggleNotificationOption(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let option = NotificationOption(rawValue: raw) else { return }
+        clearMessage()
+        let enabling = !sleep.isNotificationEnabled(option)
+        sleep.setNotificationOption(option, enabled: enabling)
+        // Ask for permission the first time expiry alerts are turned on.
+        if option == .notifyOnExpiry, enabling {
+            notifications.requestAuthorization { [weak self] granted, message in
+                if let message {
+                    self?.showMessage("Notifications: \(message)")
+                } else if !granted {
+                    self?.showMessage("Allow Newt under System Settings ▸ Notifications for alerts.")
+                }
+            }
+        }
+    }
+
     @objc private func toggleLeftClickAction(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String,
               let action = LeftClickAction(rawValue: raw) else { return }
@@ -364,13 +410,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// remaining-time label is current.
     private func refresh() {
         let active = sleep.isActive
-        // Newt: filled lizard while keep-awake is on, outline when sleeping.
-        let symbol = active ? "lizard.fill" : "lizard"
-        if let image = NSImage(systemSymbolName: symbol,
-                               accessibilityDescription: "Newt") {
-            image.isTemplate = true
-            statusItem.button?.image = image
-        }
+        // Filled lizard while engaged, outline when sleeping; a red corner dot
+        // is layered on when the "badge" option is enabled and engaged.
+        let badged = active && sleep.isNotificationEnabled(.badgeWhenEngaged)
+        statusItem.button?.image = statusImage(active: active, badged: badged)
         let blocked = sleep.blockedByBattery
         let label = blocked.map { "battery \($0.percent)% — recharge to enable" }
                     ?? sleep.displayString()
@@ -382,6 +425,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         autoUpdateItem?.state = updater.updater.automaticallyChecksForUpdates ? .on : .off
         for (mode, item) in wakeModeItems {
             item.state = sleep.isEnabled(mode) ? .on : .off
+        }
+        for (option, item) in notificationItems {
+            item.state = sleep.isNotificationEnabled(option) ? .on : .off
         }
         for (action, item) in leftClickItems {
             item.state = sleep.leftClickAction == action ? .on : .off
@@ -413,6 +459,36 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private func clearMessage() {
         messageItem.title = ""
         messageItem.isHidden = true
+    }
+
+    /// The menu bar image. A template lizard (AppKit auto-tints it for the menu
+    /// bar) normally; when `badged`, a non-template composite tinted to the
+    /// current menu bar color with a red dot in the bottom-right corner — a red
+    /// dot can't live in a template image. `appearanceObservation` re-renders on
+    /// light/dark menu bar flips.
+    private func statusImage(active: Bool, badged: Bool) -> NSImage? {
+        let symbol = active ? "lizard.fill" : "lizard"
+        guard let base = NSImage(systemSymbolName: symbol,
+                                 accessibilityDescription: "Newt") else { return nil }
+        guard badged else {
+            base.isTemplate = true
+            return base
+        }
+        let image = NSImage(size: base.size, flipped: false) { rect in
+            // Tint the glyph with the menu bar text color (resolves against the
+            // current drawing appearance), then stamp the red dot on top.
+            base.draw(in: rect)
+            NSColor.labelColor.set()
+            rect.fill(using: .sourceAtop)
+            let d = rect.height * 0.42
+            // Bottom-right corner (rect is unflipped, so minY is the bottom).
+            let dot = NSRect(x: rect.maxX - d, y: rect.minY, width: d, height: d)
+            NSColor.systemRed.setFill()
+            NSBezierPath(ovalIn: dot).fill()
+            return true
+        }
+        image.isTemplate = false
+        return image
     }
 
     // MARK: - NSView tooltip owner

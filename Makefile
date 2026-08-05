@@ -24,7 +24,8 @@ SWIFTFLAGS         += -F $(SPARKLE_DIR) -framework Sparkle \
 APP_SRC     := Newt/main.swift Newt/AppDelegate.swift \
                Newt/StatusItemController.swift Newt/SleepManager.swift \
                Newt/HelperClient.swift Newt/LoginItemController.swift \
-               Newt/BatteryMonitor.swift Shared/HelperProtocol.swift
+               Newt/BatteryMonitor.swift Newt/NotificationManager.swift \
+               Shared/HelperProtocol.swift
 HELPER_SRC  := NewtHelper/main.swift NewtHelper/HelperService.swift \
                Shared/HelperProtocol.swift
 
