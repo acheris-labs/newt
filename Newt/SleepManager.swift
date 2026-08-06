@@ -456,9 +456,14 @@ final class SleepManager {
         return Calendar.current.isDateInTomorrow(date) ? "\(time)+1" : time
     }
 
+    /// Follows the system's locale and its 12/24-hour setting. A hardcoded
+    /// "HH:mm" would be rewritten by the 24-Hour Time override anyway;
+    /// `autoupdatingCurrent` also picks up changes without a relaunch.
     private static let clockFormatter: DateFormatter = {
         let f = DateFormatter()
-        f.dateFormat = "HH:mm"
+        f.locale = .autoupdatingCurrent
+        f.dateStyle = .none
+        f.timeStyle = .short
         return f
     }()
 
@@ -489,7 +494,19 @@ final class SleepManager {
     /// first toggle. Surfaces any message via `onHelperMessage`.
     func prepareHelper() {
         helper.prepare { [weak self] message in
-            if let message { self?.onHelperMessage?(message) }
+            guard let self else { return }
+            if let message { self.onHelperMessage?(message) }
+            // The version handshake can bounce the daemon (the usual case:
+            // first launch after an update). Bouncing drops the XPC connection,
+            // and the helper's disconnect safety restores `disablesleep 0` — so
+            // anything engaged before this point, notably a launch-time resume,
+            // has silently lost lid-close protection. Re-assert it; setting the
+            // flag twice is harmless.
+            if self.isActive, self.enabledModes.contains(.lidClosed) {
+                self.helper.setDisableSleep(true) { [weak self] _, err in
+                    if let err { self?.onHelperMessage?(err) }
+                }
+            }
         }
     }
 
