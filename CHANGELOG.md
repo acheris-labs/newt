@@ -22,7 +22,9 @@ auto-update prompt.
 - **Resume last state at launch** (opt-in, next to Open at Login). If Newt was
   engaged when it last quit — or crashed — it re-engages the same way on the
   next launch (an 8 h session starts a fresh 8 h; indefinite stays indefinite).
-  If it was off, or the session had already expired, it stays off.
+  If it was off — including a timed session that ran out while Newt was
+  running — it stays off. Only the duration is remembered, not the time left,
+  so a session interrupted by a crash restarts from full.
 - **Slider labels show the end time too.** Dragging the main slider previews
   both the duration and the wall-clock time it would run to ("2h 0m/20:46"),
   and while engaged the label shows remaining time plus the end

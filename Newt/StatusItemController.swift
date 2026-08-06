@@ -131,6 +131,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// and survive untouched; `configureStatusItem()` re-runs `refresh()` to
     /// restore the correct icon.
     private func rebuildStatusItem() {
+        // Drop the observation before the observed button goes away;
+        // `configureStatusItem()` re-establishes it on the new button.
+        appearanceObservation?.invalidate()
+        appearanceObservation = nil
         // Deliberately no `removeStatusItem` — that discards the autosaved
         // position, which would defeat `autosaveName` on every rebuild. Dropping
         // the old item's last strong reference deallocates it, and an
@@ -146,6 +150,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             NSWorkspace.shared.notificationCenter.removeObserver(token)
             wakeObserver = nil
         }
+        appearanceObservation?.invalidate()
+        appearanceObservation = nil
         sleep.shutdown()
     }
 
@@ -153,6 +159,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         if let token = wakeObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(token)
         }
+        appearanceObservation?.invalidate()
     }
 
     // MARK: - Menu construction
