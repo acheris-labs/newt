@@ -11,6 +11,19 @@ auto-update prompt.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-08-07
+
+### Fixed
+- **"Could not refresh the helper: Operation not permitted."** Updating Newt
+  could permanently switch off the background helper that holds the Mac awake
+  with the lid closed, leaving that message in the menu on every launch with no
+  way back. Newt no longer touches the setting that caused it, and if the helper
+  has already been switched off it now says so plainly and opens the right
+  System Settings pane instead of showing a system error.
+
+  Already stuck? Open System Settings ▸ General ▸ Login Items & Extensions,
+  switch **Newt** on under *Allow in the Background*, then quit and reopen Newt.
+
 ## [0.4.0] - 2026-08-07
 
 ### Added
@@ -298,6 +311,7 @@ Initial public release.
 - Lizard menu bar icon (filled when engaged, outline when idle).
 
 [Unreleased]: https://github.com/acheris-labs/newt/compare/v0.4.0...HEAD
+[0.4.1]: https://github.com/acheris-labs/newt/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/acheris-labs/newt/compare/v0.3.3...v0.4.0
 [0.3.3]: https://github.com/acheris-labs/newt/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/acheris-labs/newt/compare/v0.3.1...v0.3.2

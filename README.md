@@ -124,6 +124,13 @@ reopen Newt:
 sudo xattr -dr com.apple.quarantine /Applications/Newt.app
 ```
 
+**The menu says the helper can't be registered, or asks you to turn Newt on
+under "Allow in the Background".** Open System Settings ▸ General ▸ Login Items
+& Extensions and switch **Newt** on under *Allow in the Background*, then quit
+and reopen Newt. If Newt isn't listed there, or switching it on doesn't stick,
+quit Newt, drag `/Applications/Newt.app` to the Trash, empty it, and reinstall
+from the disk image — that clears the stale record macOS is holding.
+
 **The menu bar icon disappeared.** Open Newt again from `/Applications` (or
 Spotlight) — it restores the icon rather than starting a second copy. If your
 menu bar is crowded, ⌘-drag the icon somewhere with more room; Newt remembers

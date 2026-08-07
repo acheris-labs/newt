@@ -13,10 +13,8 @@ final class HelperClient {
     /// Register the helper at launch (no menu click needed), then verify the
     /// running helper is the version we shipped with. Sparkle (or a manual
     /// reinstall) can replace the app bundle out from under a still-running
-    /// helper daemon — `launchd` keeps the old process alive, but its backing
-    /// file has been swapped, so XPC code-signature validation against it
-    /// later fails with `NSXPCConnectionInvalid`. The version handshake
-    /// detects this and bounces the helper before the user sees an error.
+    /// helper daemon; the version handshake spots that and asks the old
+    /// process to quit so `launchd` respawns it from the new bundle.
     func prepare(completion: @escaping (String?) -> Void) {
         if let message = ensureRegistered() {
             completion(message)
@@ -25,19 +23,26 @@ final class HelperClient {
         verifyHelperVersion(completion: completion)
     }
 
-    /// XPC-ping the helper for its version. On mismatch or any XPC error,
-    /// bounce the daemon via `SMAppService` unregister+register so `launchd`
-    /// respawns it from the current on-disk binary.
+    /// XPC-ping the helper for its version. A mismatch means a stale process
+    /// survived an update; an XPC error means the daemon isn't reachable at
+    /// all, which `repairRegistration()` re-submits for.
+    ///
+    /// Never calls `SMAppService.unregister()`. Re-registering straight after
+    /// an unregister fails with EPERM even though Background Task Management
+    /// still shows the record enabled, and the failed attempt leaves it
+    /// *disabled* — which only the user can undo, in Login Items. So one
+    /// unregister+register bricks the lid-close path permanently.
     private func verifyHelperVersion(completion: @escaping (String?) -> Void) {
         let conn = currentConnection()
         let proxy = conn.remoteObjectProxyWithErrorHandler { [weak self] error in
-            NSLog("Newt: getVersion XPC failed (\((error as NSError).domain) \((error as NSError).code)) — bouncing helper")
-            self?.bounceHelper(reason: "xpc-error", completion: completion)
+            let ns = error as NSError
+            NSLog("Newt: getVersion XPC failed (\(ns.domain) \(ns.code)) — re-registering")
+            self?.repairRegistration(reason: "xpc-error", completion: completion)
         } as? HelperProtocol
 
         guard let proxy else {
-            NSLog("Newt: getVersion proxy was nil — bouncing helper")
-            bounceHelper(reason: "nil-proxy", completion: completion)
+            NSLog("Newt: getVersion proxy was nil — re-registering")
+            repairRegistration(reason: "nil-proxy", completion: completion)
             return
         }
         proxy.getVersion { [weak self] runningVersion in
@@ -45,31 +50,64 @@ final class HelperClient {
                 NSLog("Newt: helper version ok (\(runningVersion))")
                 DispatchQueue.main.async { completion(nil) }
             } else {
-                NSLog("Newt: helper version mismatch — running=\(runningVersion) bundled=\(HelperConstants.version) — bouncing")
-                self?.bounceHelper(reason: "version-mismatch", completion: completion)
+                NSLog("Newt: helper stale — running=\(runningVersion) bundled=\(HelperConstants.version)")
+                self?.retireStaleHelper(completion: completion)
             }
         }
     }
 
-    /// Drop the cached XPC connection and force `SMAppService` to re-submit
-    /// the helper. `unregister()` is synchronous and only returns once
-    /// `launchd` has torn down the running daemon; `register()` then
-    /// re-submits the disposition pointing at the (now-current) bundle path.
-    /// The next caller of `setDisableSleep` will lazily reconnect.
-    private func bounceHelper(reason: String, completion: @escaping (String?) -> Void) {
+    /// Ask the stale helper to exit, then drop our connection so the next call
+    /// spawns the current binary. A helper too old to know `exitForUpgrade`
+    /// answers with an XPC error; that's harmless — it still speaks the rest of
+    /// the protocol, and a reboot retires it.
+    private func retireStaleHelper(completion: @escaping (String?) -> Void) {
+        let conn = currentConnection()
+        var finished = false
+        let finish = { [weak self] in
+            DispatchQueue.main.async {
+                guard !finished else { return }
+                finished = true
+                self?.connection?.invalidate()
+                self?.connection = nil
+                completion(nil)
+            }
+        }
+        let proxy = conn.remoteObjectProxyWithErrorHandler { error in
+            NSLog("Newt: exitForUpgrade failed (\((error as NSError).code)) — leaving stale helper running")
+            finish()
+        } as? HelperProtocol
+
+        guard let proxy else { finish(); return }
+        proxy.exitForUpgrade { finish() }
+    }
+
+    /// Re-submit the helper's launchd disposition without unregistering it.
+    /// `register()` is idempotent, so this is safe to run on every launch.
+    private func repairRegistration(reason: String, completion: @escaping (String?) -> Void) {
         connection?.invalidate()
         connection = nil
         do {
-            try service.unregister()
             try service.register()
-            NSLog("Newt: bounced helper (\(reason)) — status now \(service.status.rawValue)")
+            NSLog("Newt: re-registered helper (\(reason)) — status now \(service.status.rawValue)")
             DispatchQueue.main.async { completion(nil) }
         } catch {
-            NSLog("Newt: bounce failed (\(reason)): \(error)")
-            DispatchQueue.main.async {
-                completion("Could not refresh the helper: \(error.localizedDescription)")
-            }
+            NSLog("Newt: re-register failed (\(reason)): \(error)")
+            let message = registrationFailureMessage(error)
+            DispatchQueue.main.async { completion(message) }
         }
+    }
+
+    /// Turn a `register()` failure into something the user can act on. EPERM
+    /// means the helper's Background Task Management record is switched off —
+    /// no API re-enables it, so send the user to Login Items.
+    private func registrationFailureMessage(_ error: Error) -> String {
+        let ns = error as NSError
+        NSLog("Newt: register error domain=\(ns.domain) code=\(ns.code) status=\(service.status.rawValue)")
+        guard ns.code == Int(EPERM) else {
+            return "Could not register the helper: \(ns.localizedDescription)"
+        }
+        SMAppService.openSystemSettingsLoginItems()
+        return "Turn Newt on under Allow in the Background, then reopen Newt."
     }
 
     /// Ensure the helper daemon is registered and enabled. Returns nil when
@@ -93,7 +131,7 @@ final class HelperClient {
                 return "Enable Newt in Login Items, then quit and reopen Newt."
             } catch {
                 NSLog("Newt: register() failed: \(error)")
-                return "Could not register the helper: \(error.localizedDescription)"
+                return registrationFailureMessage(error)
             }
         case .requiresApproval:
             SMAppService.openSystemSettingsLoginItems()

@@ -42,6 +42,15 @@ final class HelperService: NSObject, HelperProtocol {
         reply(HelperConstants.version)
     }
 
+    func exitForUpgrade(reply: @escaping () -> Void) {
+        _ = Self.runPmset(disable: false)
+        sleepDisabled = false
+        reply()
+        // Give XPC a moment to flush the reply; the app re-asserts lid-close
+        // after the handshake, and launchd respawns us on the next connect.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { exit(0) }
+    }
+
     /// Invoked when the app's connection drops. Undo any lingering change.
     func connectionDropped() {
         guard sleepDisabled else { return }
