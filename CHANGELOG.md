@@ -11,6 +11,8 @@ auto-update prompt.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-07
+
 ### Added
 - **Notifications settings** — a new Configuration ▸ Notifications section with
   two opt-in toggles, both off by default:
@@ -26,15 +28,20 @@ auto-update prompt.
   running — it stays off. Only the duration is remembered, not the time left,
   so a session interrupted by a crash restarts from full.
 - **Slider labels show the end time too.** Dragging the main slider previews
-  both the duration and the wall-clock time it would run to ("2h 0m/20:46"),
-  and while engaged the label shows remaining time plus the end
-  ("1h 23m/20:46"). Ends that land tomorrow get a "+1" marker. The "On for"
-  slider keeps plain durations.
+  both the duration and the wall-clock time it would run to ("2h/20:46"), and
+  while engaged the label shows remaining time plus the end ("1h 23m/20:46").
+  Ends that land tomorrow get a "+1" marker. Times follow your system's locale
+  and its 12/24-hour setting. The "On for" slider keeps plain durations.
 - **`newt://` URL scheme** for automation (Shortcuts, cron, Raycast, …):
   `newt://engage?minutes=240`, `newt://engage?until=17:00`, `newt://engage`
   (last-used duration), `newt://off`, `newt://toggle`. All requests pass the
-  same battery-floor and wake-mode guards as the menu. Two Shortcuts personal
-  automations make this a weekday keep-awake schedule.
+  same battery-floor and wake-mode guards as the menu. A single Shortcuts
+  personal automation makes this a weekday keep-awake schedule — see the README.
+
+### Changed
+- **Durations drop a trailing zero unit** — the sliders now read "30m", "1h",
+  "2h" and "24h" instead of "30m 0s", "1h 0m", "2h 0m" and "24h 0m". Countdowns
+  are unaffected ("1h 23m", "45m 12s").
 
 ## [0.3.3] - 2026-07-23
 
@@ -290,7 +297,8 @@ Initial public release.
   `SMAppService.daemon(plistName:)`.
 - Lizard menu bar icon (filled when engaged, outline when idle).
 
-[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/acheris-labs/newt/compare/v0.3.3...v0.4.0
 [0.3.3]: https://github.com/acheris-labs/newt/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/acheris-labs/newt/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/acheris-labs/newt/compare/v0.3.0...v0.3.1
