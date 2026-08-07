@@ -485,8 +485,10 @@ final class SleepManager {
         let s = total % 60
         // ≥ 1h: hours + minutes (seconds add noise at that scale).
         // <  1h: minutes + seconds.
-        if h > 0  { return "\(h)h \(m)m" }
-        if m > 0  { return "\(m)m \(s)s" }
+        // A zero trailing unit is dropped — every slider stop is an exact
+        // multiple, so it would otherwise always read "2h 0m" / "30m 0s".
+        if h > 0  { return m > 0 ? "\(h)h \(m)m" : "\(h)h" }
+        if m > 0  { return s > 0 ? "\(m)m \(s)s" : "\(m)m" }
         return "\(s)s"
     }
 
