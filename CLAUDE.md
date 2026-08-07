@@ -92,4 +92,8 @@ the user, and skip how it's implemented.
   - Worth a comment: a platform quirk or API constraint you can't see locally, an invariant enforced somewhere else, a non-obvious ordering requirement, or a bug the line exists to prevent from returning.
   - Not worth a comment: paraphrasing the next line, narrating an obvious guard, or explaining a well-known API.
   - Keep them to a line or two. Needing a paragraph usually means the code should be restructured or given a better name.
+- **Doc comments (`///`) on a type or function describe intent, not mechanics** — what it is for, what it guarantees, and what a caller has to know (side effects, preconditions, what a return value means). Leave the *how* to the body: an implementation walkthrough duplicates the code and goes stale the first time it changes.
+  - Good: "Single source of truth for keep-awake state." / "Returns nil when engaging is allowed, otherwise a user-facing refusal."
+  - Bad: "Loops over the enabled modes and calls `applyAssertion` for each."
+  - A declaration that needs its mechanics explained to be usable is usually doing too much — split it.
 - Swift imports stay at file top; no per-function imports.
