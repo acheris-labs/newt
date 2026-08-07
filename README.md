@@ -11,62 +11,72 @@ Grab the latest `.dmg` from
 [Releases](https://github.com/acheris-labs/newt/releases) and drag `Newt.app`
 into `/Applications`.
 
-On first launch macOS will prompt you to approve Newt's background helper
-under **System Settings ▸ General ▸ Login Items & Extensions**. Enable it,
-then quit Newt from the menu and reopen it — the helper status is only
-re-checked at launch, so the warning won't clear until you relaunch. The
-approval is one-time and lets the helper toggle `pmset disablesleep` as
-root, which is what stops the Mac from sleeping when the lid is closed.
+On first launch macOS will ask you to approve Newt's background helper under
+**System Settings ▸ General ▸ Login Items & Extensions**. Enable it, then quit
+Newt from the menu and reopen it — the helper is only re-checked at launch, so
+the warning won't clear until you relaunch. This one-time approval is what
+lets Newt keep the Mac awake with the lid closed; everything else works
+without it.
 
-> **If the menu shows "Helper not found"** on Newt 0.1.2 or later, your
-> browser likely quarantined the `.dmg` — `SMAppService` won't register a
-> quarantined helper. Strip the flag and reopen Newt:
->
-> ```
-> sudo xattr -dr com.apple.quarantine /Applications/Newt.app
-> ```
->
-> Or re-download with `curl`, which avoids quarantine:
->
-> ```
-> curl -L -o Newt.dmg https://github.com/acheris-labs/newt/releases/latest/download/Newt-<version>.dmg
-> ```
->
-> Newt 0.1.0–0.1.1 had a separate bug producing the same message on fresh
-> installs regardless of quarantine — upgrade to 0.1.2+ first.
+Newt sets itself to **Open at Login** by default. You can turn that off from
+the menu.
 
-Newt also sets itself as **Open at Login** by default; you can toggle that
-off from the menu.
+## At a glance
+
+The menu bar icon tells you the current state:
+
+| Icon | Meaning |
+| --- | --- |
+| Outline lizard | Newt is idle — your Mac sleeps normally |
+| Filled lizard | Newt is holding your Mac awake |
+| Filled lizard with a dot | Same, with the optional indicator dot turned on |
+
+Hover the icon to see the time remaining. Click it to open the menu (you can
+change what a left click does — see **Configuration** below).
 
 ## Use
 
 Click the menu bar icon.
 
 - **Keep awake** slider — 16 positions: off, 30 min, 1 h, then every 2 hours
-  to 24 h, and indefinite. Picking any non-zero position holds the Mac awake
-  (display, idle, system, and lid-close). The right-hand label shows the
-  duration and the wall-clock time it runs to (`4h/21:30`), ticking down live
-  while the menu is open; a `+1` marks an end time that lands tomorrow.
-- **Low battery cutoff** slider — 0–30%. While engaged and *on battery*, if
-  the percentage falls to or below this floor, Newt auto-releases its
-  claims so macOS can hibernate cleanly. 0 disables the cutoff (hold until
-  the Mac dies). While below the cutoff and on battery the Keep-awake
-  slider greys out so you can't accidentally re-arm.
-- **Open at Login** — register Newt to launch at login.
+  to 24 h, and indefinite. Picking any non-zero position holds the Mac awake.
+  The right-hand label shows the duration and the time it runs to (`4h/21:30`),
+  counting down while the menu is open; a `+1` marks an end time that lands
+  tomorrow. Slide back to **off** to stop early.
+- **Low battery cutoff** slider — 0–30%. While engaged *on battery*, if the
+  charge falls to or below this floor, Newt lets go so macOS can sleep before
+  the battery runs flat. 0 disables the cutoff. Below the floor the Keep awake
+  slider greys out so you can't accidentally re-arm it.
+- **Open at Login** — launch Newt automatically when you log in.
 - **Resume last state at launch** — off by default. When on, if Newt was
-  engaged when it last quit (or crashed), it re-engages the same way on the
-  next launch. Only the duration is remembered, not the time left, so an
-  interrupted session restarts from full.
-- **Configuration ▸** — per-mechanism **Wake modes** (each of the three IOKit
-  assertions plus lid-close, with a time-of-day window and a "pause on
-  battery" option under *Keep display on*), the **Left click action** for the
-  menu bar icon, and **Notifications**: an indicator dot on the icon while
-  engaged, and an alert when a timed session's clock runs out.
+  keeping your Mac awake when it last quit, it picks up where it left off next
+  time it starts. The duration restarts from full.
+- **Check for Updates…** / **Check Automatically** — Newt updates itself.
+- **Quit Newt** — quitting always restores normal sleep behaviour.
+
+### Configuration
+
+- **Wake modes** — choose which parts of sleep to prevent: keep the display
+  on, keep the system awake when idle, prevent system sleep, and stay awake
+  with the lid closed. All four are on by default.
+  - Under *Keep display on*: **Display hours** limits the display-on
+    behaviour to a time of day (say 09:00–23:00 — outside it the screen may
+    sleep while everything else stays awake), and **Pause on battery** lets
+    the display sleep whenever you're unplugged.
+- **Left click action** — what clicking the icon does: open the menu, toggle
+  the last duration you used, or toggle a fixed duration you set here.
+  Right-click always opens the menu.
+- **Notifications**
+  - **Indicator dot when engaged** — adds a dot to the menu bar icon so
+    "awake" is obvious at a glance.
+  - **Notify when keep-awake expires** — posts a notification when a timed
+    session runs out on its own. It won't fire when you turn Newt off
+    yourself.
 
 ## Automation (`newt://`)
 
 Newt registers a `newt://` URL scheme, so anything that can open a URL —
-Shortcuts, `open(1)`, cron, Raycast, a Stream Deck — can drive it.
+Shortcuts, the `open` command, cron, Raycast, a Stream Deck — can drive it.
 
 | URL | Effect |
 | --- | --- |
@@ -82,12 +92,12 @@ From a terminal:
 open "newt://engage?until=20:00"
 ```
 
-These go through the same guards as the menu — the low-battery cutoff still
-refuses to engage, and your enabled wake modes still decide which mechanisms
-apply. Opening a `newt://` URL launches Newt if it isn't already running.
+These follow the same rules as the menu — the low battery cutoff still
+refuses to engage, and your chosen wake modes still decide what applies.
+Opening a `newt://` URL launches Newt if it isn't already running.
 
 > Any process on your Mac (or a link you click in a browser) can open these
-> URLs, so treat the scheme as convenience rather than a security boundary.
+> URLs, so treat the scheme as a convenience rather than a security boundary.
 > The worst it can do is keep the Mac awake — visible from the menu bar icon,
 > and undone from the menu or with `newt://off`.
 
@@ -102,63 +112,44 @@ app covers the common case:
 
 That single rule both starts and ends the session, since it engages with an
 explicit end time. Add a matching 20:00 rule opening `newt://off` if you also
-want to cut short any session you started by hand.
-
-## How it works
-
-- `SleepManager.swift` — single source of truth for keep-awake state.
-  While engaged it holds three IOKit power assertions:
-  `PreventUserIdleSystemSleep`, `PreventUserIdleDisplaySleep`, and
-  `PreventSystemSleep` (mirrors `caffeinate -dis`). Owns the expiry
-  timer and the slider mapping.
-- `HelperClient.swift` — registers the privileged daemon via
-  `SMAppService.daemon` and talks to it over XPC. Identifier-pinned
-  code-signing requirement on both ends.
-- `NewtHelper/` — the launchd daemon that runs
-  `/usr/bin/pmset -a disablesleep 0|1` as root. If Newt disconnects
-  while sleep is disabled the helper restores it automatically.
-- `BatteryMonitor.swift` — polls `IOPSCopyPowerSourcesInfo` every 15 s
-  while engaged; trips disengage when on battery and percent ≤ threshold.
-  Also raises an event-driven notification when the power source flips
-  between AC and battery, which drives the "pause on battery" option.
-- `NotificationManager.swift` — `UNUserNotificationCenter` wrapper for the
-  timer-expiry alert.
-- `LoginItemController.swift` — `SMAppService.mainApp` for auto-launch.
-- `StatusItemController.swift` — the `NSStatusItem`, the menu, and the
-  custom slider views.
-
-## Build from source
-
-```
-make build       # compile, assemble Newt.app, ad-hoc sign
-make run         # build + install to /Applications + open
-make rerun       # kill + run (handy during iteration)
-make clean       # remove build/
-```
-
-SMAppService daemons require the app to be in `/Applications`, so `make run`
-installs there rather than launching out of `build/`.
-
-For signed/notarized distribution builds see [DISTRIBUTING.md](DISTRIBUTING.md).
+want to cut short sessions you started by hand.
 
 ## Troubleshooting
 
-If sleep ever stays disabled (e.g. after a hard crash before the helper
-could reset it), the helper restores it on its next connection drop. To
+**The menu says "Helper not found".** Your browser probably quarantined the
+download, which stops macOS from registering Newt's helper. Clear the flag and
+reopen Newt:
+
+```
+sudo xattr -dr com.apple.quarantine /Applications/Newt.app
+```
+
+**The menu bar icon disappeared.** Open Newt again from `/Applications` (or
+Spotlight) — it restores the icon rather than starting a second copy. If your
+menu bar is crowded, ⌘-drag the icon somewhere with more room; Newt remembers
+where you put it.
+
+**My Mac still won't sleep after quitting Newt.** Newt restores normal sleep
+when it quits, and its helper does the same if Newt stops unexpectedly. To
 force it by hand:
 
 ```
-make reset-sleep        # sudo pmset -a disablesleep 0
-make helper-status      # show current SleepDisabled + active assertions
+sudo pmset -a disablesleep 0
 ```
 
-## Reference
+To see the current state — `SleepDisabled` should be `0` when nothing is
+holding your Mac awake:
 
-The IOKit assertion list matches what `caffeinate -dimsu` creates, minus
-`-m` (disk idle — no public IOKit assertion exists) and `-u` (declare
-user active — irrelevant when the display is already on). The privileged
-helper covers the lid-close case via `pmset -a disablesleep 1`.
+```
+pmset -g | grep SleepDisabled
+pmset -g assertions
+```
 
 ## License
 
 [MIT](LICENSE) © 2026 Chris Madden
+
+---
+
+Building Newt from source: see [CLAUDE.md](CLAUDE.md).
+Signed, notarized release builds: see [DISTRIBUTING.md](DISTRIBUTING.md).

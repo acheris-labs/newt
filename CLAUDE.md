@@ -63,6 +63,27 @@ Two binaries inside one `.app` bundle, plus a small shared protocol.
 
 Existing installs poll `https://acheris-labs.github.io/newt/appcast.xml`. Don't rename or relocate that URL — it's compiled into shipped binaries.
 
+## Documentation split
+
+`README.md` is **for people who use Newt, not people who work on it.** It
+covers installing, what the menu does, the `newt://` scheme, and recovering
+when something goes wrong. Assume the reader downloaded a `.dmg` and has no
+source checkout.
+
+Keep out of the README:
+- Source file names, type names, and code references.
+- API names (`SMAppService`, IOKit assertion constants, `UNUserNotificationCenter`, XPC).
+- `make` targets — a `.dmg` user has no Makefile, so troubleshooting steps must
+  be real commands (`sudo pmset -a disablesleep 0`), never `make reset-sleep`.
+- Build instructions, architecture notes, release process.
+- Version archaeology ("fixed in 0.1.2") once the version is a few releases old.
+
+Developer material belongs here (build, architecture, release flow) or in
+[DISTRIBUTING.md](DISTRIBUTING.md) (signing, notarization). When a feature adds
+a user-visible control, update the README's **Use** section in the same change,
+in the same plain-language register — name the menu item, say what it does for
+the user, and skip how it's implemented.
+
 ## Conventions
 
 - The Wake modes / `LeftClickAction` enums in `SleepManager.swift` are the canonical place for any new toggleable setting. Both have a `menuTitle` property used by the controller — keep the case names short and the titles user-facing.
