@@ -26,10 +26,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pendingURLs: [URL] = []
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        // Schemes are case-insensitive (RFC 3986 §3.1) and `URL` preserves the
-        // case as typed, so match on a normalized copy — otherwise `NEWT://off`
-        // is dropped here without a trace. Only the scheme is folded; query
-        // values are case-sensitive and must reach the handler untouched.
+        // Schemes are case-insensitive but `URL` preserves the case as typed,
+        // so `NEWT://off` would otherwise be dropped here without a trace.
         let newtURLs = urls.filter { $0.scheme?.lowercased() == "newt" }
         guard let controller = statusController else {
             pendingURLs += newtURLs

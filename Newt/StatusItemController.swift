@@ -25,7 +25,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private var rangeSliderItem: NSMenuItem?
     private var pauseOnBatteryItem: NSMenuItem?
     private var notificationItems: [NotificationOption: NSMenuItem] = [:]
-    private let notifications = NotificationManager()
+    /// Lazy so opting out of notifications never touches `UserNotifications`.
+    private lazy var notifications = NotificationManager()
     /// Re-renders the badged (non-template) icon when the menu bar flips
     /// light/dark — a non-template image doesn't auto-retint.
     private var appearanceObservation: NSKeyValueObservation?
@@ -610,11 +611,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     func menuWillOpen(_ menu: NSMenu) {
-        // Give each message exactly one menu opening of visibility, then retire
-        // it. Messages are often posted while the menu is closed (a helper
-        // needing approval at launch, a rejected newt:// URL), so clearing them
-        // outright here would mean the user never saw them — but leaving them
-        // forever resurfaces a stale one-off error hours later, out of context.
+        // One menu opening of visibility, then retire. Messages are often posted
+        // while the menu is closed, so clearing outright would mean never seen —
+        // but keeping them resurfaces stale errors hours later.
         if !messageItem.isHidden {
             if messageSeen { clearMessage() } else { messageSeen = true }
         }
@@ -703,10 +702,8 @@ final class DurationSliderView: NSView {
         valueLabel.alignment = .right
         valueLabel.textColor = .secondaryLabelColor
         valueLabel.frame = NSRect(x: 90, y: 24, width: 136, height: 16)
-        // "1h 23m/8:46 PM+1" in a 12-hour locale can still outgrow the field.
-        // Labels clip by default (no ellipsis); truncating the *head* keeps the
-        // end time and the "+1" tomorrow marker, which matter more than the
-        // leading digits of the remaining time.
+        // Labels clip without an ellipsis by default; truncating the head keeps
+        // the end time and "+1" marker, which matter more than the leading digits.
         valueLabel.lineBreakMode = .byTruncatingHead
         addSubview(valueLabel)
 
