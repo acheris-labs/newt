@@ -88,5 +88,8 @@ the user, and skip how it's implemented.
 
 - The Wake modes / `LeftClickAction` enums in `SleepManager.swift` are the canonical place for any new toggleable setting. Both have a `menuTitle` property used by the controller — keep the case names short and the titles user-facing.
 - `DurationSliderView` is reusable: pass a `title:` parameter (e.g. "Keep awake", "On for") and the appropriate `onChange`. Slider commits on mouse-up; if you add another instance, remember that abandoned drags (mouse leaves menu) need a `menuDidClose` commit — see the existing pattern in `StatusItemController.menuDidClose`.
-- Comments explain *why* (constraints, invariants, prior bugs), not what the code does. Look at the existing comments in `SleepManager.swift` and `StatusItemController.swift` for the house style.
+- **Comments are the exception, not the habit.** The bar: would a developer with 5+ years' experience be stuck without it? If not, delete it — clear names and small functions carry the meaning. Never restate what the code plainly does.
+  - Worth a comment: a platform quirk or API constraint you can't see locally, an invariant enforced somewhere else, a non-obvious ordering requirement, or a bug the line exists to prevent from returning.
+  - Not worth a comment: paraphrasing the next line, narrating an obvious guard, or explaining a well-known API.
+  - Keep them to a line or two. Needing a paragraph usually means the code should be restructured or given a better name.
 - Swift imports stay at file top; no per-function imports.
