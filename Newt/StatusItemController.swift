@@ -443,7 +443,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         func query(_ name: String) -> String? {
             comps?.queryItems?.first { $0.name == name }?.value
         }
-        switch url.host {
+        // Hosts are case-insensitive too (RFC 3986 §3.2.2).
+        switch url.host?.lowercased() {
         case "engage":
             if let m = query("minutes") {
                 guard let minutes = Int(m), (1...1440).contains(minutes) else {
