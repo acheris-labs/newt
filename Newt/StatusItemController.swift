@@ -33,6 +33,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// Ticks the remaining-time label while the menu is open.
     private var menuTickTimer: Timer?
 
+    /// Whether the current `messageItem` text has already been on screen for a
+    /// full menu opening — see `menuWillOpen`.
+    private var messageSeen = false
+
     /// Workspace wake observer — recreates the status item if macOS reaped it.
     private var wakeObserver: NSObjectProtocol?
 
@@ -364,11 +368,15 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         // Ask for permission the first time expiry alerts are turned on.
         if option == .notifyOnExpiry, enabling {
             notifications.requestAuthorization { [weak self] granted, message in
-                if let message {
-                    self?.showMessage("Notifications: \(message)")
-                } else if !granted {
-                    self?.showMessage("Allow Newt under System Settings ▸ Notifications for alerts.")
-                }
+                guard let self, !granted else { return }
+                // Don't leave a ticked box that can never fire: turn the option
+                // back off. The menu is already dismissed by the time this
+                // async reply lands, so say why in an alert rather than the
+                // menu's message line, which the user would never see.
+                self.sleep.setNotificationOption(option, enabled: false)
+                self.showAlert(
+                    "Newt can't post notifications",
+                    informative: message ?? "Allow notifications for Newt in System Settings ▸ Notifications, then turn this option on again.")
             }
         }
     }
@@ -531,11 +539,26 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private func showMessage(_ text: String) {
         messageItem.title = text
         messageItem.isHidden = false
+        messageSeen = false
     }
 
     private func clearMessage() {
         messageItem.title = ""
         messageItem.isHidden = true
+        messageSeen = false
+    }
+
+    /// Modal alert for things the menu's message line can't deliver — anything
+    /// reported asynchronously, after the click that triggered it has already
+    /// dismissed the menu. A menu bar (LSUIElement) app isn't active, so the
+    /// panel needs the same activation `showAbout()` uses.
+    private func showAlert(_ text: String, informative: String) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = text
+        alert.informativeText = informative
+        alert.alertStyle = .informational
+        alert.runModal()
     }
 
     /// The menu bar image. A template lizard (AppKit auto-tints it for the menu
@@ -586,6 +609,14 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     func menuWillOpen(_ menu: NSMenu) {
+        // Give each message exactly one menu opening of visibility, then retire
+        // it. Messages are often posted while the menu is closed (a helper
+        // needing approval at launch, a rejected newt:// URL), so clearing them
+        // outright here would mean the user never saw them — but leaving them
+        // forever resurfaces a stale one-off error hours later, out of context.
+        if !messageItem.isHidden {
+            if messageSeen { clearMessage() } else { messageSeen = true }
+        }
         // Tick the remaining-time label live while the menu is shown.
         // .common mode includes NSEventTracking so the timer fires during
         // menu tracking — without it the label would freeze the moment the
@@ -662,13 +693,20 @@ final class DurationSliderView: NSView {
         let font = NSFont.menuFont(ofSize: 0)
         titleLabel.font = font
         titleLabel.textColor = .secondaryLabelColor
-        titleLabel.frame = NSRect(x: 14, y: 24, width: 100, height: 16)
+        // "Keep awake" measures ~72pt; the slack goes to the value label, which
+        // now carries both a duration and a clock time.
+        titleLabel.frame = NSRect(x: 14, y: 24, width: 76, height: 16)
         addSubview(titleLabel)
 
         valueLabel.font = font
         valueLabel.alignment = .right
         valueLabel.textColor = .secondaryLabelColor
-        valueLabel.frame = NSRect(x: 110, y: 24, width: 116, height: 16)
+        valueLabel.frame = NSRect(x: 90, y: 24, width: 136, height: 16)
+        // "1h 23m/8:46 PM+1" in a 12-hour locale can still outgrow the field.
+        // Labels clip by default (no ellipsis); truncating the *head* keeps the
+        // end time and the "+1" tomorrow marker, which matter more than the
+        // leading digits of the remaining time.
+        valueLabel.lineBreakMode = .byTruncatingHead
         addSubview(valueLabel)
 
         // Continuous so the action fires on every tick crossed during drag —
