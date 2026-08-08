@@ -11,6 +11,15 @@ auto-update prompt.
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-08-08
+
+### Changed
+- **Troubleshooting now covers the "helper is out of date" message.** If Newt
+  asks you to restart your Mac after an update, the README has a one-line
+  command that clears it without restarting — and notes that quitting and
+  reopening Newt won't help, since the leftover piece runs separately from the
+  menu bar app. No changes to the app itself.
+
 ## [0.4.2] - 2026-08-07
 
 ### Fixed
@@ -326,6 +335,7 @@ Initial public release.
 - Lizard menu bar icon (filled when engaged, outline when idle).
 
 [Unreleased]: https://github.com/acheris-labs/newt/compare/v0.4.0...HEAD
+[0.4.3]: https://github.com/acheris-labs/newt/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/acheris-labs/newt/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/acheris-labs/newt/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/acheris-labs/newt/compare/v0.3.3...v0.4.0
