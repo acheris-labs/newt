@@ -124,17 +124,19 @@ reopen Newt:
 sudo xattr -dr com.apple.quarantine /Applications/Newt.app
 ```
 
-**The menu says the helper is out of date and asks you to restart.** A leftover
-piece of the previous version is still running, and only macOS can clear it.
-Restarting your Mac fixes it for good. To avoid the restart, run this instead,
-then reopen Newt:
+**The menu says the helper is out of date.** A leftover piece of the previous
+version is still running. Clear it with:
 
 ```
 sudo launchctl kickstart -k system/net.acheris.newt.helper
 ```
 
-Quitting and reopening Newt will *not* help — the leftover piece runs separately
-from the menu bar app.
+Then reopen Newt. That fixes it for good — it only ever happens once, when
+updating from 0.4.1 or earlier.
+
+Quitting and reopening Newt will *not* help: the leftover piece runs separately
+from the menu bar app, so only the command above (or a restart, if you'd rather)
+clears it.
 
 **The menu says the helper can't be registered, or asks you to turn Newt on
 under "Allow in the Background".** Open System Settings ▸ General ▸ Login Items

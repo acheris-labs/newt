@@ -58,9 +58,10 @@ final class HelperClient {
 
     /// Only a helper predating exit-when-idle can still be running from a
     /// replaced bundle. Nothing but `launchd` retires a root process, and the
-    /// app can't ask this one to quit, so say what will actually fix it.
+    /// app can't ask this one to quit, so the fix is a command the user runs —
+    /// which belongs in the README, not in a menu item.
     static let staleHelperMessage =
-        "Newt's helper is out of date — restart your Mac to finish updating."
+        "Newt's helper is out of date — see Troubleshooting in Newt's README."
 
     /// Re-submit the helper's launchd disposition without unregistering it.
     /// `register()` is idempotent, so this is safe to run on every launch.

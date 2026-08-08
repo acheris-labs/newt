@@ -14,11 +14,11 @@ auto-update prompt.
 ## [0.4.3] - 2026-08-08
 
 ### Changed
-- **Troubleshooting now covers the "helper is out of date" message.** If Newt
-  asks you to restart your Mac after an update, the README has a one-line
-  command that clears it without restarting — and notes that quitting and
-  reopening Newt won't help, since the leftover piece runs separately from the
-  menu bar app. No changes to the app itself.
+- **"Helper is out of date" now points at a real fix instead of asking you to
+  reboot.** The message sends you to the README's Troubleshooting section, which
+  gives a one-line command that clears the leftover helper on the spot. It also
+  spells out that quitting and reopening Newt won't help, since that leftover
+  piece runs separately from the menu bar app.
 
 ## [0.4.2] - 2026-08-07
 
