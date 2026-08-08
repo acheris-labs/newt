@@ -11,6 +11,21 @@ auto-update prompt.
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-08-07
+
+### Fixed
+- **"Helper connection error… (code 4102)" after updating.** Newt's background
+  helper — the part that holds the Mac awake with the lid closed — kept running
+  after an update, still using the replaced copy of Newt. macOS then refused to
+  let the two talk, so lid-close quietly stopped working until you restarted.
+  The helper now shuts down whenever Newt does and starts fresh next time, so it
+  can never be left behind by an update.
+
+  **Updating from 0.4.1 or earlier still needs one restart.** The helper already
+  running on your Mac predates this change and can't be told to stand down;
+  restarting your Mac clears it for good. Newt now says exactly that instead of
+  showing a macOS error code.
+
 ## [0.4.1] - 2026-08-07
 
 ### Fixed
@@ -311,6 +326,7 @@ Initial public release.
 - Lizard menu bar icon (filled when engaged, outline when idle).
 
 [Unreleased]: https://github.com/acheris-labs/newt/compare/v0.4.0...HEAD
+[0.4.2]: https://github.com/acheris-labs/newt/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/acheris-labs/newt/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/acheris-labs/newt/compare/v0.3.3...v0.4.0
 [0.3.3]: https://github.com/acheris-labs/newt/compare/v0.3.2...v0.3.3

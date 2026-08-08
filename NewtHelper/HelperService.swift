@@ -1,8 +1,12 @@
 import Foundation
 
 /// Accepts incoming XPC connections from the Newt app and wires each one to a
-/// fresh `HelperService`.
+/// fresh `HelperService`. Exits once the last one closes, so this daemon never
+/// outlives the app that started it.
 final class HelperListenerDelegate: NSObject, NSXPCListenerDelegate {
+    private let stateQueue = DispatchQueue(label: "net.acheris.newt.helper.connections")
+    private var activeConnections = 0
+
     func listener(_ listener: NSXPCListener,
                   shouldAcceptNewConnection conn: NSXPCConnection) -> Bool {
         // Only the genuine Newt app may talk to us. The requirement is derived
@@ -16,10 +20,29 @@ final class HelperListenerDelegate: NSObject, NSXPCListenerDelegate {
         conn.exportedInterface = NSXPCInterface(with: HelperProtocol.self)
         conn.exportedObject = service
 
-        // Crash safety: if the app dies while sleep is disabled, restore it —
-        // the daemon equivalent of lidawake's `trap cleanup`.
-        conn.invalidationHandler = { service.connectionDropped() }
-        conn.interruptionHandler = { service.connectionDropped() }
+        stateQueue.sync { activeConnections += 1 }
+
+        // One closure shared by both handlers, so `closed` guards the case where
+        // interruption and invalidation both fire for the same connection.
+        var closed = false
+        let onDrop = { [weak self] in
+            guard let self else { return }
+            self.stateQueue.async {
+                guard !closed else { return }
+                closed = true
+                self.activeConnections -= 1
+                // Crash safety: if the app dies while sleep is disabled, restore
+                // it — the daemon equivalent of lidawake's `trap cleanup`.
+                service.connectionDropped()
+                // A helper left running while its bundle is replaced underneath
+                // can never be code-signature validated again, and nothing but
+                // launchd can clear it. Exiting while idle makes that state
+                // unreachable; launchd respawns us on the next connect.
+                if self.activeConnections <= 0 { exit(0) }
+            }
+        }
+        conn.invalidationHandler = onDrop
+        conn.interruptionHandler = onDrop
 
         conn.resume()
         return true
@@ -40,15 +63,6 @@ final class HelperService: NSObject, HelperProtocol {
 
     func getVersion(reply: @escaping (String) -> Void) {
         reply(HelperConstants.version)
-    }
-
-    func exitForUpgrade(reply: @escaping () -> Void) {
-        _ = Self.runPmset(disable: false)
-        sleepDisabled = false
-        reply()
-        // Give XPC a moment to flush the reply; the app re-asserts lid-close
-        // after the handshake, and launchd respawns us on the next connect.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { exit(0) }
     }
 
     /// Invoked when the app's connection drops. Undo any lingering change.

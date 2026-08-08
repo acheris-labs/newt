@@ -12,11 +12,6 @@ import Security
 
     /// Helper build version — lets the app detect a stale installed helper.
     func getVersion(reply: @escaping (String) -> Void)
-
-    /// Ask a stale helper to quit so `launchd` respawns it from the current
-    /// bundle. Restores `disablesleep 0` first — nothing can undo it once the
-    /// process is gone. `reply` fires before the exit.
-    func exitForUpgrade(reply: @escaping () -> Void)
 }
 
 enum HelperConstants {
@@ -28,7 +23,7 @@ enum HelperConstants {
     static let helperIdentifier = "net.acheris.newt.helper"
 
     /// Bump when the helper's behavior changes.
-    static let version = "1.1"
+    static let version = "1.2"
 
     /// The strongest XPC peer requirement this build can prove, derived from
     /// *our own* signature so it auto-adapts to how we were signed:

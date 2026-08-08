@@ -51,35 +51,16 @@ final class HelperClient {
                 DispatchQueue.main.async { completion(nil) }
             } else {
                 NSLog("Newt: helper stale — running=\(runningVersion) bundled=\(HelperConstants.version)")
-                self?.retireStaleHelper(completion: completion)
+                DispatchQueue.main.async { completion(Self.staleHelperMessage) }
             }
         }
     }
 
-    /// Ask the stale helper to exit, then drop our connection so the next call
-    /// spawns the current binary. A helper too old to know `exitForUpgrade`
-    /// answers with an XPC error; that's harmless — it still speaks the rest of
-    /// the protocol, and a reboot retires it.
-    private func retireStaleHelper(completion: @escaping (String?) -> Void) {
-        let conn = currentConnection()
-        var finished = false
-        let finish = { [weak self] in
-            DispatchQueue.main.async {
-                guard !finished else { return }
-                finished = true
-                self?.connection?.invalidate()
-                self?.connection = nil
-                completion(nil)
-            }
-        }
-        let proxy = conn.remoteObjectProxyWithErrorHandler { error in
-            NSLog("Newt: exitForUpgrade failed (\((error as NSError).code)) — leaving stale helper running")
-            finish()
-        } as? HelperProtocol
-
-        guard let proxy else { finish(); return }
-        proxy.exitForUpgrade { finish() }
-    }
+    /// Only a helper predating exit-when-idle can still be running from a
+    /// replaced bundle. Nothing but `launchd` retires a root process, and the
+    /// app can't ask this one to quit, so say what will actually fix it.
+    static let staleHelperMessage =
+        "Newt's helper is out of date — restart your Mac to finish updating."
 
     /// Re-submit the helper's launchd disposition without unregistering it.
     /// `register()` is idempotent, so this is safe to run on every launch.
@@ -173,6 +154,11 @@ final class HelperClient {
         let ns = error as NSError
         let statusAtFailure = service.status
         NSLog("Newt: XPC error domain=\(ns.domain) code=\(ns.code) status=\(statusAtFailure.rawValue) desc=\(ns.localizedDescription)")
+
+        // NSXPCConnectionCodeSigningRequirementFailure: a helper still running
+        // from a bundle that was replaced underneath it can no longer be
+        // signature-validated, so we can't even reach it to ask it to quit.
+        if ns.code == 4102 { return Self.staleHelperMessage }
 
         let suffix: String
         if ns.domain == NSCocoaErrorDomain {
