@@ -11,6 +11,55 @@ auto-update prompt.
 
 ## [Unreleased]
 
+### Added
+- **Newt can now keep your Mac awake on a weekly schedule.** Tick **Use
+  schedule** in the menu and Newt holds your Mac awake during the hours you've
+  set — Mon–Fri 08:00–20:00 and nothing at the weekend, say — without you
+  touching it. *Settings ▸ Schedule* shows a week at a
+  glance: drag across a day to add hours, drag a block or its edges to adjust,
+  and drag a block's right edge into the row below for an overnight stretch.
+  Everything saves as you go.
+- **A Settings window** (**Settings…** in the menu, or ⌘,) with General,
+  Wake Modes, Schedule, Left Click, Integrations and Notifications tabs. The old
+  Configuration submenu is gone, and the menu is down to what's worth changing on
+  the spot — the Keep awake slider, the schedule switch, Suppress and Claims. The indicator dot gains size, outline, colour and spin
+  controls with a live preview.
+- **Suppress all claims** — one switch for "not right now". It overrides everything,
+  schedule and slider both. Tick it during a scheduled block and it skips only
+  the rest of that block, clearing itself when the block would have ended, so
+  tomorrow still runs. While it's on, the menu bar icon carries a yellow warning
+  badge, so a Suppress you forgot about can't quietly stop Newt working.
+
+- **Newt can hold your Mac awake while an AI coding agent is working.** Turn it
+  on by ticking **Claude Code** in *Settings ▸ Integrations* and Newt keeps your Mac
+  awake from the moment you send a prompt until the agent finishes replying —
+  so a long agentic run isn't cut short by sleep. A session left idle at the
+  prompt holds nothing, so your Mac still sleeps when you walk away. A **Claims**
+  menu near the bottom lists everything currently holding your Mac awake. Claims
+  raised from outside Newt are called *dynamic claims* — click one to see which
+  process and session it belongs to and revoke it, in case an agent ever dies
+  without cleaning up. The Keep awake slider and the schedule are listed there
+  too, greyed, so one menu answers "why is my Mac awake?". Other agents can be
+  added later; Claude Code is the first.
+
+### Changed
+- **The schedule and the Keep awake slider are independent claims.** If either
+  one wants your Mac awake, it stays awake. Sliding **Keep awake** back to off
+  no longer cuts scheduled hours short — that's what Suppress is for. The same
+  goes for `newt://off`.
+- **A low battery no longer throws away your session.** Previously, dropping to
+  the battery floor released keep-awake for good and you had to set it up
+  again. Now Newt just lets go for as long as the battery is low and picks the
+  session back up by itself when you plug in — with whatever time was left on
+  its clock.
+- **The indicator dot is green instead of red, and its colour now tells you
+  what's holding your Mac awake.** Red read like a warning when it was only ever
+  saying "awake". Green now means the Keep awake slider or the schedule, blue
+  means an AI agent is working, and a split green/blue dot means both at once.
+  The dot is now outlined so it stays readable when a bright wallpaper shows
+  through the menu bar, its size and both colours are adjustable in Settings,
+  and the split dot spins while both kinds of claim are holding at once.
+
 ## [0.4.3] - 2026-08-08
 
 ### Changed

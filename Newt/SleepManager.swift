@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import IOKit.pwr_mgt
 
@@ -51,7 +52,7 @@ enum NotificationOption: String, CaseIterable {
     var defaultsKey: String { "Notify.\(rawValue)" }
     var menuTitle: String {
         switch self {
-        case .badgeWhenEngaged: return "Indicator dot when engaged"
+        case .badgeWhenEngaged: return "Indicator dot when awake"
         case .notifyOnExpiry:   return "Notify when keep-awake expires"
         }
     }
@@ -61,6 +62,14 @@ enum NotificationOption: String, CaseIterable {
 /// lidawake treatment — IOKit power assertions (idle/display sleep) plus the
 /// privileged helper's `pmset disablesleep` (lid-close sleep). Disengaging
 /// undoes both.
+///
+/// Three independent *claims* can ask for the Mac to stay awake — the duration
+/// slider, the weekly schedule, and dynamic claims raised over `newt://` (an AI
+/// agent working through its hooks, say) — and
+/// two *vetoes* can refuse — the low battery floor and manual suppression.
+/// Assertions are applied when at least one claim is up and neither veto is.
+/// `reconcile()` is the only place that decides; nothing else touches the
+/// assertion or helper APIs.
 final class SleepManager {
     private(set) var state: AwakeState = .off
 
@@ -134,8 +143,16 @@ final class SleepManager {
     private var assertionsActive = false
     private var expiryTimer: Timer?
     private var displayWindowTimer: Timer?
+    private var boundaryTimer: Timer?
+    private var isReconciling = false
+    private var systemObservers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
     private let helper = HelperClient()
     private let battery = BatteryMonitor()
+
+    /// Claims raised from outside — an AI agent while it works, or anything
+    /// else driving `newt://claim`. In memory only: a Newt restart drops them,
+    /// which fails safe, and a live agent re-claims on its next turn.
+    let dynamicClaims = DynamicClaimRegistry()
 
     /// Called whenever `state` changes — the controller refreshes the menu.
     var onChange: (() -> Void)?
@@ -146,7 +163,15 @@ final class SleepManager {
     /// to post a system notification.
     var onTimerExpired: (() -> Void)?
 
-    var isActive: Bool { state != .off }
+    /// True when Newt is actually holding the Mac awake right now — a claim is
+    /// up and no veto is refusing it. This, not the slider position, is what the
+    /// icon, badge and tooltip reflect.
+    var isActive: Bool { assertionsActive }
+
+    /// True when the duration slider itself is holding a session, regardless of
+    /// whether a veto is currently suppressing it.
+    var hasSliderClaim: Bool { state != .off }
+
     var hasBattery: Bool { battery.hasBattery }
 
     /// Battery percentage floor at which Newt auto-releases its claims.
@@ -158,6 +183,97 @@ final class SleepManager {
             battery.thresholdPercent = clamped
             UserDefaults.standard.set(clamped, forKey: "BatteryThresholdPercent")
         }
+    }
+
+    /// Indicator dot diameter as a fraction of the icon's height. Adjustable
+    /// because how visible a dot needs to be depends on the wallpaper behind
+    /// the menu bar, which Newt can't see.
+    var badgeSizeScale: Double = 0.46 {
+        didSet {
+            badgeSizeScale = max(0.30, min(0.70, badgeSizeScale))
+            guard badgeSizeScale != oldValue else { return }
+            UserDefaults.standard.set(badgeSizeScale, forKey: "BadgeSizeScale")
+            onChange?()
+        }
+    }
+
+    /// Outline the dot in the menu bar's own text colour. That colour is by
+    /// definition legible against this menu bar, so the ring separates the dot
+    /// from any wallpaper behind it.
+    var badgeOutline = true {
+        didSet {
+            guard badgeOutline != oldValue else { return }
+            UserDefaults.standard.set(badgeOutline, forKey: "BadgeOutline")
+            onChange?()
+        }
+    }
+
+    /// Spin the split dot while both a long-lived claim and a dynamic one are in
+    /// force. Costs a repeating timer for as long as that lasts, so it's
+    /// switchable.
+    var badgeSpin = true {
+        didSet {
+            guard badgeSpin != oldValue else { return }
+            UserDefaults.standard.set(badgeSpin, forKey: "BadgeSpin")
+            onChange?()
+        }
+    }
+
+    /// Custom indicator dot colours, or nil to use the system green/blue.
+    ///
+    /// Left unset by default on purpose: `systemGreen`/`systemBlue` are dynamic
+    /// colours that adapt to appearance, and freezing them into stored
+    /// components would lose that. Only an explicit pick is persisted.
+    var scheduledBadgeColor: NSColor? {
+        didSet {
+            guard scheduledBadgeColor != oldValue else { return }
+            Self.store(scheduledBadgeColor, forKey: "BadgeColorScheduled")
+            onChange?()
+        }
+    }
+
+    var dynamicBadgeColor: NSColor? {
+        didSet {
+            guard dynamicBadgeColor != oldValue else { return }
+            Self.store(dynamicBadgeColor, forKey: "BadgeColorDynamic")
+            onChange?()
+        }
+    }
+
+    /// Everything the status item needs to draw the dot.
+    var badgeStyle: BadgeStyle {
+        BadgeStyle(scale: badgeSizeScale,
+                   outline: badgeOutline,
+                   scheduled: scheduledBadgeColor ?? .systemGreen,
+                   dynamic: dynamicBadgeColor ?? .systemBlue)
+    }
+
+    /// True when both dots are on the stock colours.
+    var badgeColorsAreDefault: Bool {
+        scheduledBadgeColor == nil && dynamicBadgeColor == nil
+    }
+
+    func resetBadgeColors() {
+        scheduledBadgeColor = nil
+        dynamicBadgeColor = nil
+    }
+
+    /// Stored as sRGB components rather than an archived `NSColor` so the value
+    /// is legible in `defaults read` and can't break on an archive format change.
+    private static func storedColor(forKey key: String) -> NSColor? {
+        guard let parts = UserDefaults.standard.array(forKey: key) as? [Double],
+              parts.count == 4 else { return nil }
+        return NSColor(srgbRed: parts[0], green: parts[1], blue: parts[2], alpha: parts[3])
+    }
+
+    private static func store(_ color: NSColor?, forKey key: String) {
+        guard let rgb = color?.usingColorSpace(.sRGB) else {
+            UserDefaults.standard.removeObject(forKey: key)
+            return
+        }
+        UserDefaults.standard.set(
+            [rgb.redComponent, rgb.greenComponent, rgb.blueComponent, rgb.alphaComponent],
+            forKey: key)
     }
 
     /// Which mechanisms are enabled. Defaults to all-on on first run so the
@@ -181,6 +297,17 @@ final class SleepManager {
     /// Re-engage at launch with whatever state Newt had when it last quit (or
     /// was killed). Off by default. See `resumeIfNeeded()`.
     private(set) var resumeOnLaunch = false
+
+    /// Whether the weekly schedule gets a vote. Off by default so an upgrade
+    /// never starts holding the Mac awake on its own.
+    private(set) var scheduleEnabled = false
+
+    /// The weekly awake windows. Only consulted when `scheduleEnabled`.
+    private(set) var schedule = WeeklySchedule.workweek
+
+    /// When set and still in the future, every claim is refused. `.distantFuture`
+    /// means "until the user clears it" — see `setSuppressed(_:)`.
+    private(set) var suppressedUntil: Date?
 
     /// Left-click behavior. Default `.openMenu` preserves prior UX on upgrade.
     private(set) var leftClickAction: LeftClickAction = .openMenu
@@ -211,12 +338,20 @@ final class SleepManager {
         battery.thresholdPercent = max(0, min(30, saved))
         battery.onTrip = { [weak self] in
             guard let self, self.isActive else { return }
-            self.onHelperMessage?("Released keep-awake — battery hit \(self.battery.thresholdPercent)%")
-            self.disengage()
+            self.onHelperMessage?("Held off keep-awake — battery hit \(self.battery.thresholdPercent)%")
         }
+        // Every poll, so the veto lifts again once the charge or the power
+        // source recovers — the claims themselves are never torn down.
+        battery.onEvaluate = { [weak self] in self?.reconcile(notify: false) }
         // Plug/unplug while engaged: suspend or resume the display assertion if
         // "pause on battery" is on. Other mechanisms are untouched.
-        battery.onPowerChange = { [weak self] in self?.reevaluateDisplay() }
+        // Reconcile first: plugging back in can lift the battery veto and
+        // rebuild the assertions, and only then is there a display assertion
+        // for `reevaluateDisplay` to adjust.
+        battery.onPowerChange = { [weak self] in
+            self?.reconcile()
+            self?.reevaluateDisplay()
+        }
         // Load mode toggles. If a key is missing (first run / upgrade), the
         // mode defaults to on.
         let defaults = UserDefaults.standard
@@ -251,6 +386,39 @@ final class SleepManager {
                 enabledNotifications.insert(option)
             }
         }
+        badgeSizeScale = defaults.object(forKey: "BadgeSizeScale") as? Double ?? 0.46
+        badgeOutline = defaults.object(forKey: "BadgeOutline") as? Bool ?? true
+        badgeSpin = defaults.object(forKey: "BadgeSpin") as? Bool ?? true
+        scheduledBadgeColor = Self.storedColor(forKey: "BadgeColorScheduled")
+        dynamicBadgeColor = Self.storedColor(forKey: "BadgeColorDynamic")
+        // Weekly schedule. Missing keys → the workweek default, switched off.
+        scheduleEnabled = defaults.object(forKey: "ScheduleEnabled") as? Bool ?? false
+        schedule = WeeklySchedule.load()
+        if let stamp = defaults.object(forKey: "SuppressedUntil") as? Double {
+            suppressedUntil = Date(timeIntervalSinceReferenceDate: stamp)
+        }
+        dynamicClaims.onChange = { [weak self] in self?.reconcile() }
+        registerSystemObservers()
+    }
+
+    deinit {
+        systemObservers.forEach { $0.center.removeObserver($0.token) }
+    }
+
+    /// The boundary timer is a wall-clock appointment, and three things move the
+    /// wall clock out from under it: the Mac sleeping through the fire date, the
+    /// clock being set, and a time-zone change. Each just re-runs the decision.
+    private func registerSystemObservers() {
+        let reconcileOnEvent: (Notification) -> Void = { [weak self] _ in self?.reconcile() }
+        let workspace = NSWorkspace.shared.notificationCenter
+        systemObservers.append((workspace, workspace.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil, queue: .main, using: reconcileOnEvent)))
+        for name in [Notification.Name.NSSystemClockDidChange,
+                     Notification.Name.NSSystemTimeZoneDidChange] {
+            systemObservers.append((.default, NotificationCenter.default.addObserver(
+                forName: name, object: nil, queue: .main, using: reconcileOnEvent)))
+        }
     }
 
     func setLeftClickAction(_ action: LeftClickAction) {
@@ -261,12 +429,18 @@ final class SleepManager {
     }
 
     /// Drive a left-click on the menu bar icon. The controller calls this only
-    /// when `leftClickAction != .openMenu`. If currently active, disengages;
-    /// otherwise engages at the slider position implied by the current action.
+    /// when `leftClickAction != .openMenu`. Clicking "off" has to silence every
+    /// claim or the click looks ignored, so it suppresses the schedule too;
+    /// clicking "on" first lifts any suppression it finds.
     func performLeftClickToggle() {
         if isActive {
             setSliderPosition(0)
+            if scheduleClaimEnd != nil { setSuppressed(true) }
             return
+        }
+        if isSuppressed {
+            setSuppressed(false)
+            if isActive { return }
         }
         switch leftClickAction {
         case .openMenu:    return  // controller handles
@@ -301,7 +475,9 @@ final class SleepManager {
                 }
             }
         }
-        onChange?()
+        // Not just onChange — dropping the last enabled mode has to release
+        // everything, and re-adding the first has to build it back up.
+        reconcile()
     }
 
     func isNotificationEnabled(_ option: NotificationOption) -> Bool {
@@ -362,13 +538,17 @@ final class SleepManager {
 
     /// nil when engaging is allowed; otherwise a user-facing refusal message.
     /// Shared by the slider and URL-scheme entry points so the guards can't
-    /// drift apart.
+    /// drift apart. A veto arriving mid-session only pauses the claim, but an
+    /// explicit request to start one is refused outright and told why.
     private func canEngage() -> String? {
         if enabledModes.isEmpty {
             return "Enable at least one wake mode in the menu"
         }
         if let blocked = blockedByBattery {
             return "Can't engage — battery \(blocked.percent)% is at or below your \(blocked.threshold)% floor"
+        }
+        if isSuppressed {
+            return "Can't engage — Newt is suppressed. Untick Suppress in the menu."
         }
         return nil
     }
@@ -401,16 +581,120 @@ final class SleepManager {
         engage(.timed(until: until), durationSeconds: seconds)
     }
 
-    /// Re-engage with the state Newt had when it last stopped running.
+    /// Launch-time catch-up. Re-engages the slider claim Newt had when it last
+    /// stopped running, if "Resume last state at launch" is on —
     /// `EngagedSliderPosition` is written on every engage/disengage, so this
     /// survives crashes and `killall`, and an expired or manually-ended session
     /// correctly stays off. Goes through `setSliderPosition`, so the battery
     /// floor and wake-mode guards apply as if the user moved the slider.
+    ///
+    /// Always reconciles afterwards, so a schedule block already in progress
+    /// takes effect at launch regardless of that setting.
     func resumeIfNeeded() {
-        guard resumeOnLaunch, !isActive else { return }
-        let p = UserDefaults.standard.integer(forKey: "EngagedSliderPosition")
-        guard p > 0 else { return }
-        setSliderPosition(p)
+        if resumeOnLaunch, !hasSliderClaim {
+            let p = UserDefaults.standard.integer(forKey: "EngagedSliderPosition")
+            if p > 0 { setSliderPosition(p) }
+        }
+        reconcile()
+    }
+
+    // MARK: - Claims and vetoes
+
+    /// End of the schedule block in progress, or nil when the schedule isn't
+    /// asking for anything right now.
+    var scheduleClaimEnd: Date? {
+        guard scheduleEnabled else { return nil }
+        return schedule.blockEnd(covering: Date())
+    }
+
+    /// True while the manual suppress veto is in force.
+    var isSuppressed: Bool {
+        guard let until = suppressedUntil else { return false }
+        return until > Date()
+    }
+
+    private var shouldHoldAwake: Bool {
+        guard blockedByBattery == nil, !isSuppressed, !enabledModes.isEmpty else { return false }
+        return hasSliderClaim || scheduleClaimEnd != nil || !dynamicClaims.isEmpty
+    }
+
+    /// Apply or release everything to match the current claims and vetoes.
+    /// Idempotent and safe to call from any event — a timer edge, a power
+    /// change, a menu toggle, waking from sleep.
+    ///
+    /// `notify` is for callers that change something the menu shows without
+    /// changing whether Newt is engaged. The battery poll passes false, so a
+    /// quiet 15-second tick doesn't redraw the status icon forever.
+    private func reconcile(notify: Bool = true) {
+        guard !isReconciling else { return }
+        isReconciling = true
+        defer { isReconciling = false }
+
+        clearExpiredSuppression()
+        // Before computing the answer: enabling the monitor polls immediately,
+        // which re-enters here and is dropped by the guard above.
+        updateBatteryMonitor()
+
+        let wasActive = assertionsActive
+        let want = shouldHoldAwake
+        if want && !assertionsActive {
+            createAssertions()
+            if enabledModes.contains(.lidClosed) {
+                helper.setDisableSleep(true) { [weak self] _, err in
+                    if let err { self?.onHelperMessage?(err) }
+                }
+            }
+        } else if !want && assertionsActive {
+            releaseAssertions()
+            helper.setDisableSleep(false) { _, _ in }
+        }
+
+        scheduleExpiry()
+        scheduleDisplayWindowTimer()
+        scheduleBoundaryTimer()
+        if notify || assertionsActive != wasActive { onChange?() }
+    }
+
+    /// The battery has to stay watched whenever a claim exists, not just while
+    /// engaged — otherwise nothing would notice the charge recovering and lift
+    /// the veto.
+    private func updateBatteryMonitor() {
+        let claimPossible = hasSliderClaim
+            || (scheduleEnabled && !schedule.isEmpty)
+            || !dynamicClaims.isEmpty
+        if claimPossible { battery.enable() } else { battery.disable() }
+    }
+
+    private func clearExpiredSuppression() {
+        guard let until = suppressedUntil, until <= Date() else { return }
+        suppressedUntil = nil
+        UserDefaults.standard.removeObject(forKey: "SuppressedUntil")
+    }
+
+    /// Wake at the next moment the answer could change: a schedule edge, or the
+    /// suppression expiring.
+    private func scheduleBoundaryTimer() {
+        var fire: Date?
+        if scheduleEnabled, let next = schedule.nextBoundary(after: Date()) {
+            fire = next
+        }
+        if let until = suppressedUntil, until < .distantFuture {
+            fire = min(fire ?? until, until)
+        }
+        // A second past the edge, so re-arming can't land on the same instant
+        // and spin.
+        let target = fire?.addingTimeInterval(1)
+        // reconcile() runs on every battery poll; re-arming an identical timer
+        // four times a minute is pure churn.
+        if boundaryTimer?.isValid == true, boundaryTimer?.fireDate == target { return }
+        boundaryTimer?.invalidate()
+        boundaryTimer = nil
+        guard let target else { return }
+        let t = Timer(fire: target, interval: 0, repeats: false) { [weak self] _ in
+            self?.reconcile()
+        }
+        RunLoop.main.add(t, forMode: .common)
+        boundaryTimer = t
     }
 
     /// nil if engagement is allowed; otherwise the (current %, configured %)
@@ -426,8 +710,12 @@ final class SleepManager {
     }
 
     /// Menu label for the slider: "off" / "indefinite" / remaining + end time
-    /// ("1h 23m/20:46", "+1" marking an end that lands tomorrow).
+    /// ("1h 23m/20:46", "+1" marking an end that lands tomorrow). Describes the
+    /// slider's own claim; when a veto is in force it says so instead, since the
+    /// countdown would otherwise imply the Mac is being held awake.
     func displayString() -> String {
+        if isSuppressed { return "suppressed" }
+        if let blocked = blockedByBattery { return "held off — battery \(blocked.percent)%" }
         switch state {
         case .off:        return "off"
         case .indefinite: return "indefinite"
@@ -451,7 +739,7 @@ final class SleepManager {
 
     /// "20:46", flight-style "+1" suffix when the date lands tomorrow (the
     /// spelled-out "(tomorrow)" wouldn't fit beside a duration in the menu).
-    private static func clockString(_ date: Date) -> String {
+    static func clockString(_ date: Date) -> String {
         let time = clockFormatter.string(from: date)
         return Calendar.current.isDateInTomorrow(date) ? "\(time)+1" : time
     }
@@ -511,53 +799,58 @@ final class SleepManager {
 
     // MARK: - Engage / disengage
 
+    /// Raise the slider claim. Whether that actually applies assertions is
+    /// `reconcile()`'s call — a veto can be in force.
     private func engage(_ newState: AwakeState, durationSeconds: Int) {
         state = newState
         activeDurationSeconds = durationSeconds
         // Live engagement record for "Resume last state at launch" — written on
         // every transition (not just clean quit) so it survives crashes.
         UserDefaults.standard.set(sliderPosition, forKey: "EngagedSliderPosition")
-        if !assertionsActive { createAssertions() }
-        scheduleExpiry()
-        scheduleDisplayWindowTimer()
-        battery.enable()
-        if enabledModes.contains(.lidClosed) {
-            helper.setDisableSleep(true) { [weak self] _, err in
-                if let err { self?.onHelperMessage?(err) }
-            }
-        }
-        onChange?()
+        reconcile()
     }
 
+    /// Drop the slider claim. The Mac may well stay awake afterwards — the
+    /// schedule is a separate claim and this doesn't touch it.
     func disengage() {
-        guard state != .off else { return }
         state = .off
         activeDurationSeconds = 0
         sliderPosition = 0
         UserDefaults.standard.set(0, forKey: "EngagedSliderPosition")
+        reconcile()
+    }
+
+    /// App-termination teardown: releases everything unconditionally — claims
+    /// don't outlive the process — but preserves the resume record, since
+    /// quitting while engaged must count as "engaged at quit" for
+    /// `resumeIfNeeded()`.
+    func shutdown() {
+        let p = sliderPosition
+        state = .off
+        activeDurationSeconds = 0
+        sliderPosition = 0
         expiryTimer?.invalidate()
         expiryTimer = nil
         displayWindowTimer?.invalidate()
         displayWindowTimer = nil
+        boundaryTimer?.invalidate()
+        boundaryTimer = nil
         battery.disable()
         releaseAssertions()
         helper.setDisableSleep(false) { _, _ in }
-        onChange?()
-    }
-
-    /// App-termination teardown: releases everything like `disengage()`, but
-    /// preserves the resume record — quitting while engaged must count as
-    /// "engaged at quit" for `resumeIfNeeded()`, and `disengage()` zeroes it.
-    func shutdown() {
-        let p = sliderPosition
-        disengage()
         if p > 0 { UserDefaults.standard.set(p, forKey: "EngagedSliderPosition") }
     }
 
     private func scheduleExpiry() {
+        var until: Date?
+        if case .timed(let u) = state { until = u }
+        // reconcile() re-runs this on every battery poll; tearing down and
+        // rebuilding an identical timer four times a minute risks re-arming it
+        // across the instant it was due to fire.
+        if expiryTimer?.isValid == true, expiryTimer?.fireDate == until { return }
         expiryTimer?.invalidate()
         expiryTimer = nil
-        guard case .timed(let until) = state else { return }
+        guard let until else { return }
         let t = Timer(fire: until, interval: 0, repeats: false) { [weak self] _ in
             self?.onTimerExpired?()
             self?.disengage()
@@ -653,6 +946,87 @@ final class SleepManager {
         onChange?()
     }
 
+    // MARK: - Weekly schedule
+
+    func setScheduleEnabled(_ on: Bool) {
+        guard on != scheduleEnabled else { return }
+        scheduleEnabled = on
+        UserDefaults.standard.set(on, forKey: "ScheduleEnabled")
+        reconcile()
+    }
+
+    func setSchedule(_ new: WeeklySchedule) {
+        let normalized = new.normalized()
+        guard normalized != schedule else { return }
+        schedule = normalized
+        normalized.save()
+        reconcile()
+    }
+
+    /// Turn the manual veto on or off. Switching it on lasts until the end of
+    /// the block in progress, or the start of the next one if none is — so
+    /// "not today, thanks" doesn't also cancel tomorrow. With no schedule to
+    /// hang that on, it stays until cleared by hand.
+    func setSuppressed(_ on: Bool) {
+        if on {
+            let until: Date
+            if let end = scheduleClaimEnd {
+                until = end
+            } else if scheduleEnabled, let next = schedule.nextStart(after: Date()) {
+                until = next
+            } else {
+                until = .distantFuture
+            }
+            suppressedUntil = until
+            UserDefaults.standard.set(until.timeIntervalSinceReferenceDate, forKey: "SuppressedUntil")
+        } else {
+            suppressedUntil = nil
+            UserDefaults.standard.removeObject(forKey: "SuppressedUntil")
+        }
+        reconcile()
+    }
+
+    /// One-line summary of the dynamic claims in force, for the menu. nil when
+    /// none are.
+    func dynamicStatusString() -> String? {
+        let claims = dynamicClaims.sortedClaims
+        guard let first = claims.first else { return nil }
+        if claims.count == 1 { return "\(first.agent) is working — \(first.label)" }
+        return "\(claims.count) agents working"
+    }
+
+    /// What the schedule is doing, short enough to sit on the end of the "Use
+    /// schedule" menu item rather than taking a row of its own. nil when the
+    /// schedule is switched off and has nothing to say.
+    func scheduleSummary() -> String? {
+        guard scheduleEnabled else { return nil }
+        if isSuppressed {
+            guard let until = suppressedUntil, until < .distantFuture else {
+                return "suppressed"
+            }
+            return "suppressed until \(Self.clockString(until))"
+        }
+        if let end = scheduleClaimEnd {
+            return "awake until \(Self.clockString(end))"
+        }
+        guard let next = schedule.nextStart(after: Date()) else {
+            return "no hours set"
+        }
+        return "next \(Self.dayTimeString(next))"
+    }
+
+    /// "Mon 8:00" — day plus time, in the user's locale and 12/24-hour setting.
+    private static func dayTimeString(_ date: Date) -> String {
+        dayTimeFormatter.string(from: date)
+    }
+
+    private static let dayTimeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = .autoupdatingCurrent
+        f.setLocalizedDateFormatFromTemplate("EEE jmm")
+        return f
+    }()
+
     // MARK: - IOKit power assertions
 
     private func createAssertions() {
@@ -697,4 +1071,19 @@ final class SleepManager {
         if preventSystemAssertion != 0  { IOPMAssertionRelease(preventSystemAssertion);  preventSystemAssertion = 0 }
         assertionsActive = false
     }
+}
+
+/// How the menu bar indicator dot is drawn. Colors are configurable because
+/// which ones stand out depends on the wallpaper behind the menu bar, which
+/// Newt can't see; the *meaning* of each is fixed.
+struct BadgeStyle {
+    var scale: Double = 0.46
+    var outline: Bool = true
+    /// Slider or schedule — the long-lived claims.
+    var scheduled: NSColor = .systemGreen
+    /// Dynamic claims, usually an AI agent mid-turn.
+    var dynamic: NSColor = .systemBlue
+    /// Radians the split is turned through. Only the two-tone "both" dot uses
+    /// it — a solid disc looks identical however far you rotate it.
+    var rotation: Double = 0
 }

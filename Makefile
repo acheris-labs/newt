@@ -25,6 +25,9 @@ APP_SRC     := Newt/main.swift Newt/AppDelegate.swift \
                Newt/StatusItemController.swift Newt/SleepManager.swift \
                Newt/HelperClient.swift Newt/LoginItemController.swift \
                Newt/BatteryMonitor.swift Newt/NotificationManager.swift \
+               Newt/Schedule.swift Newt/ScheduleGridView.swift \
+               Newt/DynamicClaims.swift Newt/HookInstaller.swift \
+               Newt/SettingsWindowController.swift \
                Shared/HelperProtocol.swift
 HELPER_SRC  := NewtHelper/main.swift NewtHelper/HelperService.swift \
                Shared/HelperProtocol.swift
