@@ -11,12 +11,14 @@ auto-update prompt.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-14
+
 ### Added
 - **Newt can now keep your Mac awake on a weekly schedule.** Tick **Use
   schedule** in the menu and Newt holds your Mac awake during the hours you've
   set — Mon–Fri 08:00–20:00 and nothing at the weekend, say — without you
-  touching it. *Settings ▸ Schedule* shows a week at a
-  glance: drag across a day to add hours, drag a block or its edges to adjust,
+  touching it. *Settings ▸ Schedule* shows a week at a glance: drag across a
+  day to add hours, drag a block or its edges to adjust,
   and drag a block's right edge into the row below for an overnight stretch.
   Everything saves as you go.
 - **A Settings window** (**Settings…** in the menu, or ⌘,) with General,
@@ -383,7 +385,8 @@ Initial public release.
   `SMAppService.daemon(plistName:)`.
 - Lizard menu bar icon (filled when engaged, outline when idle).
 
-[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/acheris-labs/newt/compare/v0.4.3...v0.5.0
 [0.4.3]: https://github.com/acheris-labs/newt/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/acheris-labs/newt/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/acheris-labs/newt/compare/v0.4.0...v0.4.1
