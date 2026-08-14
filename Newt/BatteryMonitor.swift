@@ -2,9 +2,10 @@ import Foundation
 import IOKit
 import IOKit.ps
 
-/// Polls the battery while keep-awake is active and trips when the percentage
-/// falls below a configured floor — so Newt doesn't hold the Mac awake until
-/// it runs flat.
+/// Polls the battery while Newt has any claim on staying awake, and trips when
+/// the percentage falls below a configured floor — so Newt doesn't hold the Mac
+/// awake until it runs flat. Polling outlives the trip on purpose: the caller
+/// needs to hear about the recovery too.
 final class BatteryMonitor {
     /// Percent (0–30) below which Newt should release its claims. 0 disables
     /// the cutoff entirely (hold until the machine dies).
@@ -12,8 +13,14 @@ final class BatteryMonitor {
         didSet { restart() }
     }
 
-    /// Called on the main runloop when battery ≤ threshold while on battery.
+    /// Called on the main runloop the first time battery ≤ threshold while on
+    /// battery. Edge-triggered — it won't repeat every poll while the condition
+    /// holds, and re-arms once the charge or the power source recovers.
     var onTrip: (() -> Void)?
+
+    /// Called on the main runloop after every poll, whatever the outcome, so a
+    /// caller gating on the battery can notice recovery as well as depletion.
+    var onEvaluate: (() -> Void)?
 
     /// Called on the main runloop when the power source flips between AC and
     /// battery (not on routine percentage ticks). Lets callers react to
@@ -22,6 +29,8 @@ final class BatteryMonitor {
 
     private var timer: Timer?
     private var enabled = false
+    /// Whether the floor is currently breached, so `onTrip` stays edge-triggered.
+    private var tripped = false
     /// Event-driven plug/unplug source, independent of the threshold poll above
     /// (so it works even when the low-battery cutoff is off). Active while enabled.
     private var powerSource: CFRunLoopSource?
@@ -36,6 +45,9 @@ final class BatteryMonitor {
     func currentSnapshot() -> (percent: Int, onAC: Bool)? { Self.read() }
 
     func enable() {
+        // Idempotent: `onEvaluate` re-enters the caller's reconcile step, which
+        // calls back here, and a second `restart()` would recurse.
+        guard !enabled else { return }
         enabled = true
         restart()
         startPowerNotifications()
@@ -43,6 +55,7 @@ final class BatteryMonitor {
 
     func disable() {
         enabled = false
+        tripped = false
         timer?.invalidate()
         timer = nil
         stopPowerNotifications()
@@ -84,6 +97,7 @@ final class BatteryMonitor {
     private func restart() {
         timer?.invalidate()
         timer = nil
+        tripped = false
         guard enabled, thresholdPercent > 0 else { return }
         // Battery doesn't move fast; 15s is plenty and keeps wake-ups cheap.
         let t = Timer(timeInterval: 15, repeats: true) { [weak self] _ in self?.check() }
@@ -93,12 +107,17 @@ final class BatteryMonitor {
     }
 
     private func check() {
-        guard let snapshot = Self.read() else { return }
-        // Only release when actually on battery. Plugged in → nothing to do.
-        guard !snapshot.onAC else { return }
-        if snapshot.percent <= thresholdPercent {
-            onTrip?()
+        // An unreadable snapshot is treated as "not breached" — refusing to
+        // hold the Mac awake because IOPS hiccuped would be worse than the risk.
+        let breached: Bool
+        if let snapshot = Self.read() {
+            breached = !snapshot.onAC && snapshot.percent <= thresholdPercent
+        } else {
+            breached = false
         }
+        if breached && !tripped { onTrip?() }
+        tripped = breached
+        onEvaluate?()
     }
 
     /// Returns (percent 0–100, onAC) for the internal battery, or nil if none.

@@ -34,6 +34,10 @@ Two binaries inside one `.app` bundle, plus a small shared protocol.
 - `main.swift` → `AppDelegate.swift` constructs `StatusItemController` (and the Sparkle updater) on `applicationDidFinishLaunching`.
 - `StatusItemController.swift` owns the `NSStatusItem`, the menu, the custom slider views (`DurationSliderView`, `BatterySliderView`), and the left/right click router. Calls into `SleepManager` for all state changes.
 - `SleepManager.swift` is the **single source of truth** for keep-awake state. Holds the IOKit `IOPMAssertion` IDs, the slider position, the expiry `Timer`, and the user's per-mechanism `WakeMode` toggles + `LeftClickAction` preference. Surfaces changes back to the controller through `onChange` and `onHelperMessage` callbacks. Anywhere else in the code that "wants to engage" must go through `SleepManager.setSliderPosition(_:)` or `performLeftClickToggle()` — never call assertion APIs directly.
+- `Schedule.swift` is the weekly-schedule model: `ScheduleBlock` / `WeeklySchedule`, the coverage and boundary date maths, and JSON persistence. Pure logic, no AppKit — keep it that way, it's the part worth testing standalone.
+- `HookInstaller.swift` installs Newt's hooks into an AI agent's settings file (`~/.claude/settings.json`), which other tools also write to. Back up, add only our entries, identify them by the `newt://claim?` marker in the command, never rewrite a key we didn't add. The hooks are self-contained shell one-liners — `sed` pulls `session_id` off stdin, and `$PPID` **is** the agent process (a `command` hook runs as its direct child), which is where the pid to watch and the tty to label with come from. No CLI, no jq/python dependency.
+- `SettingsWindowController.swift` is the app's only `NSWindow`: an `NSTabView` of General / Schedule / Left Click / Notifications. Every control writes straight through to `SleepManager` on change — no OK or Apply. `SPUUpdaterProviding` is a one-property protocol so this file doesn't import Sparkle and can be exercised in a harness with a stub.
+- `ScheduleGridView.swift` is the custom weekly grid (drag to add/move/resize, overnight wrap). It's hosted by the Schedule tab, but knows nothing about it — it just reports a `WeeklySchedule` through `onChange`.
 - `HelperClient.swift` registers the daemon via `SMAppService.daemon(plistName:)` and brokers XPC calls (`setDisableSleep`) over an `NSXPCConnection` with identifier-pinned code requirements on both ends.
 - `BatteryMonitor.swift` polls `IOPSCopyPowerSourcesInfo` every 15s while engaged; trips disengage when on battery and percent ≤ user-configured threshold.
 - `LoginItemController.swift` uses `SMAppService.mainApp` for auto-launch.
@@ -46,13 +50,47 @@ Two binaries inside one `.app` bundle, plus a small shared protocol.
 
 ### State model worth knowing
 
+**Claims and vetoes.** Three claims can ask for the Mac to stay awake — the
+duration slider (`state: AwakeState`), the weekly schedule, and *dynamic claims*
+raised over `newt://claim` (`dynamicClaims`, typically an AI agent's hooks) — and
+two vetoes can refuse — the low battery floor (`blockedByBattery`) and manual
+suppression (`suppressedUntil`). Assertions apply when at least one claim is up
+and neither veto is. `SleepManager.reconcile()` is the **only** function that applies or
+releases anything; `engage`/`disengage`/`setSchedule`/`setSuppressed` all just
+change state and call it. Consequences worth remembering:
+
+- `isActive` means "assertions are applied right now", not "the slider is set".
+  Use `hasSliderClaim` for the latter.
+- `disengage()` drops only the *slider* claim. It is not a global off switch —
+  `shutdown()` is, and it's the only thing that releases unconditionally.
+- A veto never destroys a claim. When the battery recovers, the session resumes
+  with whatever time is left on its absolute end date. So `BatteryMonitor` has
+  to keep polling whenever a claim exists, not only while engaged.
+- `canEngage()` still *refuses* an explicit user request under a veto (snapping
+  the slider back to 0 with a message). Mid-session vetoes only pause. That
+  asymmetry is deliberate: a click deserves an answer.
+
+Dynamic claims are held only for the duration of an agent's turn and live in
+memory only — a Newt restart drops them, which fails safe, and the agent
+re-claims next turn.
+Each one with a resolved pid gets a `DispatchSourceProcess` exit watcher, since
+an agent that is killed never runs its release hook (`SessionEnd` is explicitly
+not guaranteed to fire). There is no expiry backstop by design; the Claims
+submenu is the last resort.
+
+The schedule's `boundaryTimer` is a one-shot armed at the next edge, not a
+poll. Wall-clock jumps it can't see — sleep/wake, clock set, time zone — are
+covered by three notification observers that just call `reconcile()`.
+
 - The duration slider has 11 positions: 0=off, 1–9 = 1m…24h (geometric), 10 = indefinite. The table is `SleepManager.sliderDurations`.
-- Engaging applies up to 4 mechanisms, each individually toggleable via the **Configuration ▸ Wake modes** submenu: `PreventUserIdleDisplaySleep`, `PreventUserIdleSystemSleep`, `PreventSystemSleep` (IOKit assertions, no helper needed), and `pmset disablesleep` (helper-only, lid-close case). Defaults to all four on.
+- Engaging applies up to 4 mechanisms, each individually toggleable in **Settings ▸ Wake Modes**: `PreventUserIdleDisplaySleep`, `PreventUserIdleSystemSleep`, `PreventSystemSleep` (IOKit assertions, no helper needed), and `pmset disablesleep` (helper-only, lid-close case). Defaults to all four on.
 - `SleepManager.engage()` is idempotent w.r.t. assertions — flipping a `WakeMode` toggle while engaged adds/drops just that assertion without bouncing the session.
 
 ### UserDefaults keys (all in standard defaults)
 
-`BatteryThresholdPercent`, `WakeMode.<rawValue>` (one per case), `LeftClickAction`, `LastUsedSliderPosition`, `FixedClickSliderPosition`. All have sensible defaults for fresh installs — never add a migration that breaks an upgrade.
+`BatteryThresholdPercent`, `WakeMode.<rawValue>` (one per case), `LeftClickAction`, `LastUsedSliderPosition`, `FixedClickSliderPosition`, `ScheduleEnabled`, `ScheduleBlocks` (JSON `Data`), `SuppressedUntil` (`Double`, absent = not suppressed), `BadgeSizeScale` (`Double`), `BadgeOutline` (`Bool`), `BadgeSpin` (`Bool`), `BadgeColorScheduled` / `BadgeColorDynamic` (`[Double]` sRGB components; **absent means "use the system colour"**, which keeps the default dynamic across light/dark — don't write the system colour's components into them). All have sensible defaults for fresh installs — never add a migration that breaks an upgrade.
+
+Note when testing by hand: `defaults write … -float` is **single precision**, which rounds a seconds-since-2001 timestamp to the nearest ~26 s. Write `SuppressedUntil` with `-date` or from code, or you'll chase a timer bug that isn't there.
 
 ## Release flow
 
@@ -83,6 +121,14 @@ Developer material belongs here (build, architecture, release flow) or in
 a user-visible control, update the README's **Use** section in the same change,
 in the same plain-language register — name the menu item, say what it does for
 the user, and skip how it's implemented.
+
+Settings live in one of two places, and the split is deliberate: the **menu**
+keeps what's worth changing on the spot (the Keep awake slider, the schedule
+switch, Suppress, Claims), and the **Settings window** takes what you set once —
+the battery floor, wake modes, schedule hours, left-click action, integrations
+and notifications. Both read through `SleepManager` and are redrawn by
+`StatusItemController.refresh()` — a view must never read or write UserDefaults
+directly, or the two surfaces drift.
 
 ## Conventions
 

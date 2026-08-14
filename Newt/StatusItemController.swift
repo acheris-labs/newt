@@ -13,18 +13,13 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let updater: SPUStandardUpdaterController
 
     private var durationSliderView: DurationSliderView!
-    private var batterySliderView: BatterySliderView?
-    private var loginItem: NSMenuItem!
-    private var resumeItem: NSMenuItem!
-    private var autoUpdateItem: NSMenuItem!
     private var messageItem: NSMenuItem!
-    private var wakeModeItems: [WakeMode: NSMenuItem] = [:]
-    private var leftClickItems: [LeftClickAction: NSMenuItem] = [:]
-    private var fixedClickSliderView: DurationSliderView!
-    private var rangeSliderView: RangeSliderView!
-    private var rangeSliderItem: NSMenuItem?
-    private var pauseOnBatteryItem: NSMenuItem?
-    private var notificationItems: [NotificationOption: NSMenuItem] = [:]
+    private var scheduleItem: NSMenuItem!
+    private var suppressItem: NSMenuItem!
+    private var claimsItem: NSMenuItem!
+    /// Retained across openings — letting it deallocate would lose the
+    /// window's position and the tab you were on.
+    private var settingsWindow: SettingsWindowController?
     /// Lazy so opting out of notifications never touches `UserNotifications`.
     private lazy var notifications = NotificationManager()
     /// Re-renders the badged (non-template) icon when the menu bar flips
@@ -33,6 +28,18 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     /// Ticks the remaining-time label while the menu is open.
     private var menuTickTimer: Timer?
+
+    /// Spins the split dot. Runs only while that dot is actually on screen —
+    /// both claim kinds up, the dot switched on, and spin enabled — so the app
+    /// is idle again the moment any of those stops being true.
+    private var badgeSpinTimer: Timer?
+    private var badgeSpinFrame = 0
+    /// One full turn, pre-rendered. Re-rendering the SF Symbol, the tint and the
+    /// knockout 24 times a second cost ~8% CPU; the rotation is periodic, so a
+    /// fixed set of frames can just be cycled instead. Rebuilt only when
+    /// something that affects the drawing changes.
+    private var badgeSpinFrames: [NSImage] = []
+    private var badgeSpinFramesKey = ""
 
     /// Whether the current `messageItem` text has already been on screen for a
     /// full menu opening — see `menuWillOpen`.
@@ -45,6 +52,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         self.updater = updater
         super.init()
         buildMenu()
+        // Enablement is set explicitly in `refresh()`; leaving validation on
+        // would let AppKit override it (notably on the Claims submenu parent).
+        menu.autoenablesItems = false
         menu.delegate = self
         sleep.onChange = { [weak self] in self?.refresh() }
         sleep.onHelperMessage = { [weak self] msg in self?.showMessage(msg) }
@@ -185,136 +195,53 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         durationItem.view = durationSliderView
         menu.addItem(durationItem)
 
-        // Battery cutoff slider — only meaningful on machines with a battery.
-        if sleep.hasBattery {
-            menu.addItem(.separator())
-            let view = BatterySliderView(initialValue: sleep.batteryThresholdPercent) { [weak self] v in
-                self?.sleep.batteryThresholdPercent = v
-            }
-            let item = NSMenuItem()
-            item.view = view
-            menu.addItem(item)
-            batterySliderView = view
-        }
+        scheduleItem = NSMenuItem(title: "Use schedule",
+                                  action: #selector(toggleSchedule),
+                                  keyEquivalent: "")
+        scheduleItem.target = self
+        menu.addItem(scheduleItem)
+
+        suppressItem = NSMenuItem(title: "Suppress all claims",
+                                  action: #selector(toggleSuppress),
+                                  keyEquivalent: "")
+        suppressItem.target = self
+        menu.addItem(suppressItem)
 
         menu.addItem(.separator())
 
-        // "Configuration" submenu — two sections, each introduced by a disabled
-        // header item: the four wake-mechanism toggles, then the left-click
-        // action radio group + its fixed-duration slider.
-        let configItem = NSMenuItem(title: "Configuration", action: nil, keyEquivalent: "")
-        let configSub = NSMenu()
+        // Sits with Suppress: both are about what's currently holding the Mac
+        // awake. Always present so it's a predictable place to look, greyed
+        // out when nothing is held.
+        claimsItem = NSMenuItem(title: "Claims", action: nil, keyEquivalent: "")
+        let claimsSub = NSMenu()
+        // The submenu can legitimately hold nothing but disabled rows — the
+        // slider and schedule are shown but can't be revoked from here — and
+        // AppKit's automatic validation would grey out the parent in that case.
+        // Managing enablement by hand keeps `isEnabled` the single truth.
+        claimsSub.autoenablesItems = false
+        claimsItem.submenu = claimsSub
+        menu.addItem(claimsItem)
 
-        let wakeHeader = NSMenuItem(title: "Wake modes", action: nil, keyEquivalent: "")
-        wakeHeader.isEnabled = false
-        configSub.addItem(wakeHeader)
-        for mode in WakeMode.allCases {
-            let item = NSMenuItem(title: mode.menuTitle,
-                                  action: #selector(toggleWakeMode(_:)),
-                                  keyEquivalent: "")
-            item.target = self
-            item.representedObject = mode.rawValue
-            configSub.addItem(item)
-            wakeModeItems[mode] = item
-
-            // Directly under "Keep display on": a time-of-day window slider.
-            if mode == .display {
-                rangeSliderView = RangeSliderView(
-                    initialStart: sleep.displayWindowStart,
-                    initialEnd: sleep.displayWindowEnd
-                ) { [weak self] start, end in
-                    self?.sleep.setDisplayWindow(start: start, end: end)
-                }
-                let rangeItem = NSMenuItem()
-                rangeItem.view = rangeSliderView
-                rangeItem.isHidden = !sleep.isEnabled(.display)
-                configSub.addItem(rangeItem)
-                rangeSliderItem = rangeItem
-
-                // Battery Macs only: suspend "Keep display on" while unplugged.
-                if sleep.hasBattery {
-                    let pauseItem = NSMenuItem(title: "Pause on battery",
-                                               action: #selector(togglePauseOnBattery),
-                                               keyEquivalent: "")
-                    pauseItem.target = self
-                    // Indent so it reads as a sub-option of "Keep display on"
-                    // rather than a peer of the other wake modes.
-                    pauseItem.indentationLevel = 1
-                    pauseItem.isHidden = !sleep.isEnabled(.display)
-                    configSub.addItem(pauseItem)
-                    pauseOnBatteryItem = pauseItem
-                }
-            }
-        }
-        configSub.addItem(.separator())
-        let leftClickHeader = NSMenuItem(title: "Left click action", action: nil, keyEquivalent: "")
-        leftClickHeader.isEnabled = false
-        configSub.addItem(leftClickHeader)
-        for action in LeftClickAction.allCases {
-            let item = NSMenuItem(title: action.menuTitle,
-                                  action: #selector(toggleLeftClickAction(_:)),
-                                  keyEquivalent: "")
-            item.target = self
-            item.representedObject = action.rawValue
-            configSub.addItem(item)
-            leftClickItems[action] = item
-        }
-        fixedClickSliderView = DurationSliderView(
-            title: "On for",
-            initialPosition: sleep.fixedClickSliderPosition,
-            initialText: SleepManager.displayString(forSliderPosition: sleep.fixedClickSliderPosition),
-            textForPosition: { SleepManager.displayString(forSliderPosition: $0) }
-        ) { [weak self] pos in
-            let p = max(1, pos)  // option 3 must engage something
-            self?.sleep.fixedClickSliderPosition = p
-            self?.refresh()
-        }
-        let fixedItem = NSMenuItem()
-        fixedItem.view = fixedClickSliderView
-        configSub.addItem(fixedItem)
-
-        configSub.addItem(.separator())
-        let notifyHeader = NSMenuItem(title: "Notifications", action: nil, keyEquivalent: "")
-        notifyHeader.isEnabled = false
-        configSub.addItem(notifyHeader)
-        for option in NotificationOption.allCases {
-            let item = NSMenuItem(title: option.menuTitle,
-                                  action: #selector(toggleNotificationOption(_:)),
-                                  keyEquivalent: "")
-            item.target = self
-            item.representedObject = option.rawValue
-            configSub.addItem(item)
-            notificationItems[option] = item
-        }
-        configItem.submenu = configSub
-        menu.addItem(configItem)
-
-        loginItem = NSMenuItem(title: "Open at Login",
-                               action: #selector(toggleLogin),
-                               keyEquivalent: "")
-        loginItem.target = self
-        menu.addItem(loginItem)
-
-        resumeItem = NSMenuItem(title: "Resume last state at launch",
-                                action: #selector(toggleResume),
-                                keyEquivalent: "")
-        resumeItem.target = self
-        menu.addItem(resumeItem)
 
         menu.addItem(.separator())
 
+        let settingsItem = NSMenuItem(title: "Settings…",
+                                      action: #selector(showSettings),
+                                      keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+
+        menu.addItem(.separator())
+
+        // Open at Login, Resume last state and Check Automatically now live in
+        // Settings ▸ General. Checking *now* is an action, not a setting, so it
+        // stays where you can reach it in one click.
         let checkNowItem = NSMenuItem(
             title: "Check for Updates…",
             action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
             keyEquivalent: "")
         checkNowItem.target = updater
         menu.addItem(checkNowItem)
-
-        autoUpdateItem = NSMenuItem(title: "Check Automatically",
-                                    action: #selector(toggleAutoUpdate),
-                                    keyEquivalent: "")
-        autoUpdateItem.target = self
-        menu.addItem(autoUpdateItem)
 
         messageItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         messageItem.isEnabled = false
@@ -337,56 +264,144 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     // MARK: - Actions
 
-    @objc private func toggleLogin() {
+
+
+
+
+    @objc private func toggleSchedule() {
         clearMessage()
-        if let msg = login.setEnabled(!login.isEnabled) {
-            showMessage(msg)
+        sleep.setScheduleEnabled(!sleep.scheduleEnabled)
+    }
+
+    @objc private func toggleSuppress() {
+        clearMessage()
+        sleep.setSuppressed(!sleep.isSuppressed)
+    }
+
+    /// Show what a claim actually is, and offer to revoke it. Revoking is not
+    /// wired straight to the menu item on purpose: identifying the right claim
+    /// matters more than saving a click, and a live agent would just re-claim
+    /// on its next turn anyway.
+    @objc private func showClaimDetail(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String,
+              let claim = sleep.dynamicClaims.claims[id] else { return }
+
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "\(claim.agent) — \(claim.label)"
+        var body = claim.detailLines.map { "\($0.0): \($0.1)" }.joined(separator: "\n")
+        if claim.hasNoAutomaticRelease {
+            body += "\n\nNewt couldn't identify the process behind this claim, "
+                + "so nothing will release it automatically."
+        }
+        alert.informativeText = body
+        alert.alertStyle = .informational
+
+        let revoke = alert.addButton(withTitle: "Revoke")
+        // `hasDestructiveAction` alone leaves dark red text on a red bezel in
+        // dark mode, which is unreadable. Setting both the fill and the title
+        // colour is the only way to be legible in either appearance — and the
+        // title has to come with the bezel, since white on the default grey is
+        // just as bad the other way.
+        revoke.bezelColor = .systemRed
+        revoke.attributedTitle = NSAttributedString(string: "Revoke", attributes: [
+            .foregroundColor: NSColor.white,
+            .font: NSFont.systemFont(ofSize: NSFont.systemFontSize),
+            .paragraphStyle: {
+                let style = NSMutableParagraphStyle()
+                style.alignment = .center
+                return style
+            }(),
+        ])
+        let cancel = alert.addButton(withTitle: "Cancel")
+        // Return dismisses rather than revokes — the destructive option should
+        // never be the one you hit by reflex.
+        revoke.keyEquivalent = ""
+        cancel.keyEquivalent = "\r"
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            sleep.dynamicClaims.remove(id: id)
+        }
+    }
+
+    @objc private func releaseAllClaims() {
+        sleep.dynamicClaims.removeAll()
+    }
+
+    /// Add or remove the hooks that let an agent raise a claim while it works.
+    /// Editing someone else's settings file is worth confirming first, and worth
+    /// naming the backup afterwards.
+    private func toggleIntegration(id: String) {
+        // Belt and braces: the checkbox for an unsupported tool is disabled, but
+        // this must never write to a settings file Newt hasn't been taught.
+        guard let agent = HookInstaller.agent(id: id), agent.isAvailable else { return }
+        let installed = HookInstaller.isInstalled(agent)
+        NSApp.activate(ignoringOtherApps: true)
+
+        let confirm = NSAlert()
+        confirm.messageText = installed
+            ? "Stop keeping your Mac awake while \(agent.name) works?"
+            : "Keep your Mac awake while \(agent.name) works?"
+        confirm.informativeText = (installed
+            ? "Newt will remove its hooks from:\n\(agent.settings.path)\n\nAnything else in that file is left alone."
+            : "Newt will add three hooks to:\n\(agent.settings.path)\n\nThey tell Newt when \(agent.name) starts and finishes working. Anything already in that file is left alone, and a backup is made first.")
+        confirm.alertStyle = .informational
+        confirm.addButton(withTitle: installed ? "Remove Hooks" : "Add Hooks")
+        confirm.addButton(withTitle: "Cancel")
+        guard confirm.runModal() == .alertFirstButtonReturn else { return }
+
+        do {
+            let outcome = installed ? try HookInstaller.uninstall(agent)
+                                    : try HookInstaller.install(agent)
+            switch outcome {
+            case .installed(let backup):
+                showAlert("Hooks added",
+                          informative: "\(agent.name) usually picks these up straight away. If a session that's already open doesn't, restart it.\n\nBackup: \(backup.path)")
+            case .removed(let backup):
+                showAlert("Hooks removed",
+                          informative: "If a session that's already open keeps claiming, restart it.\n\nBackup: \(backup.path)")
+            case .alreadyInstalled, .notInstalled:
+                break
+            }
+        } catch {
+            showAlert("Couldn't update \(agent.name)'s settings", informative: "\(error)")
         }
         refresh()
     }
 
-    @objc private func toggleWakeMode(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
-              let mode = WakeMode(rawValue: raw) else { return }
-        clearMessage()
-        sleep.setMode(mode, enabled: !sleep.isEnabled(mode))
+    @objc private func showSettings() {
+        openSettings(selecting: nil)
     }
 
-    @objc private func togglePauseOnBattery() {
-        sleep.setPauseDisplayOnBattery(!sleep.pauseDisplayOnBattery)
-    }
-
-    @objc private func toggleResume() {
-        sleep.setResumeOnLaunch(!sleep.resumeOnLaunch)
-    }
-
-    @objc private func toggleNotificationOption(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
-              let option = NotificationOption(rawValue: raw) else { return }
-        clearMessage()
-        let enabling = !sleep.isNotificationEnabled(option)
-        sleep.setNotificationOption(option, enabled: enabling)
-        // Ask for permission the first time expiry alerts are turned on.
-        if option == .notifyOnExpiry, enabling {
-            notifications.requestAuthorization { [weak self] granted, message in
-                guard let self, !granted else { return }
-                // Don't leave a ticked box that can never fire: turn the option
-                // back off. The menu is already dismissed by the time this
-                // async reply lands, so say why in an alert rather than the
-                // menu's message line, which the user would never see.
-                self.sleep.setNotificationOption(option, enabled: false)
-                self.showAlert(
-                    "Newt can't post notifications",
-                    informative: message ?? "Allow notifications for Newt in System Settings ▸ Notifications, then turn this option on again.")
+    private func openSettings(selecting tab: String?) {
+        if settingsWindow == nil {
+            let window = SettingsWindowController(sleep: sleep, login: login,
+                                                  updater: updater.updater)
+            window.onExpiryNotificationsEnabled = { [weak self] in
+                self?.confirmNotificationAuthorization()
             }
+            window.onToggleIntegration = { [weak self] id in
+                self?.toggleIntegration(id: id)
+            }
+            settingsWindow = window
+        }
+        settingsWindow?.show(selecting: tab)
+    }
+
+    /// Ask for notification permission when expiry alerts are switched on, and
+    /// turn the option back off if it's refused — a ticked box that can never
+    /// fire is worse than an unticked one. Lives here rather than in the
+    /// settings window because the alert and the `NotificationManager` do.
+    private func confirmNotificationAuthorization() {
+        notifications.requestAuthorization { [weak self] granted, message in
+            guard let self, !granted else { return }
+            self.sleep.setNotificationOption(.notifyOnExpiry, enabled: false)
+            self.showAlert(
+                "Newt can't post notifications",
+                informative: message ?? "Allow notifications for Newt in System Settings ▸ Notifications, then turn this option on again.")
         }
     }
 
-    @objc private func toggleLeftClickAction(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
-              let action = LeftClickAction(rawValue: raw) else { return }
-        sleep.setLeftClickAction(action)
-    }
 
     /// Standard macOS About panel. It pulls the app icon (the Newt logo), name,
     /// version (`CFBundleShortVersionString` + `CFBundleVersion`), and copyright
@@ -436,13 +451,20 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     ///   newt://engage?minutes=240   engage for exactly N minutes (1…1440)
     ///   newt://engage?until=17:00   engage until the next HH:MM occurrence
     ///   newt://engage               engage at the last-used duration
-    ///   newt://off                  disengage
-    ///   newt://toggle               off if engaged, else last-used duration
+    ///   newt://off                  end the slider's session (not the schedule)
+    ///   newt://toggle               off if the slider is running, else last-used
+    ///   newt://suppress             veto everything (add ?toggle to flip)
+    ///   newt://unsuppress           lift the veto
+    ///   newt://claim?acquire=…&id=… raise/drop a dynamic claim
     func handleURL(_ url: URL) {
         clearMessage()
         let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
         func query(_ name: String) -> String? {
             comps?.queryItems?.first { $0.name == name }?.value
+        }
+        // Presence, not value, so both `?toggle` and `?toggle=1` work.
+        func hasFlag(_ name: String) -> Bool {
+            comps?.queryItems?.contains { $0.name == name } ?? false
         }
         // Hosts are case-insensitive too (RFC 3986 §3.2.2).
         switch url.host?.lowercased() {
@@ -465,10 +487,40 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         case "off":
             sleep.setSliderPosition(0)
         case "toggle":
-            sleep.setSliderPosition(sleep.isActive ? 0 : sleep.lastUsedSliderPosition)
+            // The slider's own claim, not `isActive` — otherwise a schedule
+            // block in progress would make this a no-op.
+            sleep.setSliderPosition(sleep.hasSliderClaim ? 0 : sleep.lastUsedSliderPosition)
+        case "suppress":
+            sleep.setSuppressed(hasFlag("toggle") ? !sleep.isSuppressed : true)
+        case "unsuppress":
+            sleep.setSuppressed(false)
+        case "claim":
+            handleClaimURL(query: query)
         default:
             showMessage("newt:// — unknown action \u{201C}\(url.host ?? "")\u{201D}")
         }
+    }
+
+    /// Raise or drop a dynamic claim. Usually driven by an AI agent's hooks, but
+    /// anything can; `id` identifies the claim and is all a release needs.
+    private func handleClaimURL(query: (String) -> String?) {
+        guard let id = query("id"), !id.isEmpty else {
+            showMessage("newt:// — claim needs an id")
+            return
+        }
+        let acquire = query("acquire").map { $0 != "false" && $0 != "0" } ?? true
+        guard acquire else {
+            sleep.dynamicClaims.remove(id: id)
+            return
+        }
+        sleep.dynamicClaims.add(DynamicClaim(
+            id: id,
+            agent: query("agent") ?? "agent",
+            pid: query("pid").flatMap(pid_t.init),
+            // `ps` prints "??" for a process with no controlling terminal.
+            tty: query("tty").flatMap { $0 == "??" || $0.isEmpty ? nil : $0 },
+            label: query("label") ?? "unknown",
+            since: Date()))
     }
 
     /// "17:00" → the next Date that wall-clock time occurs (today if still
@@ -484,11 +536,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         return cal.date(byAdding: .day, value: 1, to: today)
     }
 
-    @objc private func toggleAutoUpdate() {
-        let now = updater.updater.automaticallyChecksForUpdates
-        updater.updater.automaticallyChecksForUpdates = !now
-        refresh()
-    }
 
     // MARK: - Refresh
 
@@ -498,44 +545,157 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let active = sleep.isActive
         // Filled lizard while engaged, outline when sleeping; a red corner dot
         // is layered on when the "badge" option is enabled and engaged.
-        let badged = active && sleep.isNotificationEnabled(.badgeWhenEngaged)
-        statusItem.button?.image = statusImage(active: active, badged: badged)
+        applyStatusImage()
         let blocked = sleep.blockedByBattery
-        let label = blocked.map { "battery \($0.percent)% — recharge to enable" }
-                    ?? sleep.displayString()
+        let vetoLabel = blocked.map { "battery \($0.percent)% — recharge to enable" }
+                    ?? (sleep.isSuppressed ? "suppressed" : nil)
         durationSliderView.refresh(position: sleep.sliderPosition,
-                                   displayText: label,
-                                   enabled: blocked == nil)
-        batterySliderView?.refresh(value: sleep.batteryThresholdPercent)
-        loginItem.state = login.isEnabled ? .on : .off
-        resumeItem.state = sleep.resumeOnLaunch ? .on : .off
-        autoUpdateItem?.state = updater.updater.automaticallyChecksForUpdates ? .on : .off
-        for (mode, item) in wakeModeItems {
-            item.state = sleep.isEnabled(mode) ? .on : .off
+                                   displayText: vetoLabel ?? sleep.displayString(),
+                                   enabled: vetoLabel == nil)
+        scheduleItem.state = sleep.scheduleEnabled ? .on : .off
+        // Status rides on the item itself rather than an indented row beneath.
+        scheduleItem.title = sleep.scheduleSummary()
+            .map { "Use schedule — \($0)" } ?? "Use schedule"
+        suppressItem.state = sleep.isSuppressed ? .on : .off
+        suppressItem.title = suppressTitle()
+        refreshClaims()
+        settingsWindow?.refresh()
+    }
+
+    /// Rebuilds the Claims submenu: everything currently holding the Mac awake,
+    /// whatever raised it. Cheap and infrequent, so rebuilding beats diffing.
+    ///
+    /// Dynamic claims can be revoked from here. The slider and the schedule are
+    /// listed for completeness but greyed — they're turned off with their own
+    /// controls, and revoking them here would just be a second way to do the
+    /// same thing.
+    private func refreshClaims() {
+        guard let submenu = claimsItem.submenu else { return }
+        submenu.removeAllItems()
+
+        let dynamic = sleep.dynamicClaims.sortedClaims
+        claimsItem.isEnabled = !dynamic.isEmpty || sleep.hasSliderClaim
+            || sleep.scheduleClaimEnd != nil
+        guard claimsItem.isEnabled else { return }
+
+        if !dynamic.isEmpty {
+            submenu.addItem(disabledRow("Click a dynamic claim for details"))
+            for claim in dynamic {
+                let item = NSMenuItem(title: claim.menuTitle,
+                                      action: #selector(showClaimDetail(_:)),
+                                      keyEquivalent: "")
+                item.target = self
+                item.representedObject = claim.id
+                item.toolTip = claim.detail
+                submenu.addItem(item)
+            }
         }
-        for (option, item) in notificationItems {
-            item.state = sleep.isNotificationEnabled(option) ? .on : .off
+
+        if sleep.hasSliderClaim {
+            let row = disabledRow("Keep awake slider — \(sleep.displayString())")
+            row.toolTip = "Slide Keep awake back to off to release this"
+            submenu.addItem(row)
         }
-        for (action, item) in leftClickItems {
-            item.state = sleep.leftClickAction == action ? .on : .off
+        if let end = sleep.scheduleClaimEnd {
+            let row = disabledRow("Schedule — until \(SleepManager.clockString(end))")
+            row.toolTip = "Untick Use schedule, or Suppress, to release this"
+            submenu.addItem(row)
         }
-        // Surface the remembered duration so the user can see what
-        // "toggle last" would re-engage at.
-        if let lastItem = leftClickItems[.toggleLast] {
-            let dur = SleepManager.displayString(forSliderPosition: sleep.lastUsedSliderPosition)
-            lastItem.title = "Toggle last duration (\(dur))"
+
+        guard !dynamic.isEmpty else { return }
+        submenu.addItem(.separator())
+        let all = NSMenuItem(title: "Release all dynamic claims",
+                             action: #selector(releaseAllClaims),
+                             keyEquivalent: "")
+        all.target = self
+        submenu.addItem(all)
+    }
+
+    /// A greyed, unclickable row — the same idiom the Configuration submenu's
+    /// section headers use.
+    private func disabledRow(_ title: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        return item
+    }
+
+    /// Draw the icon for the current state, and keep the spin timer in step
+    /// with whether the split dot is showing.
+    private func applyStatusImage() {
+        let badge = currentBadge()
+        let spinning = badge == .both && sleep.badgeSpin
+        updateBadgeSpin(spinning: spinning)
+        if spinning, !badgeSpinFrames.isEmpty {
+            statusItem.button?.image = badgeSpinFrames[badgeSpinFrame % badgeSpinFrames.count]
+            return
         }
-        // Fixed-click slider is configurable only when option 3 is selected.
-        fixedClickSliderView.refresh(
-            position: sleep.fixedClickSliderPosition,
-            displayText: SleepManager.displayString(forSliderPosition: sleep.fixedClickSliderPosition),
-            enabled: sleep.leftClickAction == .toggleFixed)
-        rangeSliderItem?.isHidden = !sleep.isEnabled(.display)
-        pauseOnBatteryItem?.isHidden = !sleep.isEnabled(.display)
-        pauseOnBatteryItem?.state = sleep.pauseDisplayOnBattery ? .on : .off
-        rangeSliderView.refresh(start: sleep.displayWindowStart,
-                                end: sleep.displayWindowEnd,
-                                enabled: true)
+        statusItem.button?.image = Self.statusImage(
+            active: sleep.isActive, badge: badge, suppressed: sleep.isSuppressed,
+            style: sleep.badgeStyle)
+    }
+
+    private static let spinFrameCount = 36
+    private static let spinSecondsPerTurn = 4.5
+
+    private func updateBadgeSpin(spinning: Bool) {
+        // Only the two-tone dot has anything to show; a solid disc is radially
+        // symmetric, so spinning it would burn a timer for no visible change.
+        guard spinning else {
+            badgeSpinTimer?.invalidate()
+            badgeSpinTimer = nil
+            badgeSpinFrames = []
+            badgeSpinFramesKey = ""
+            badgeSpinFrame = 0
+            return
+        }
+        rebuildSpinFramesIfNeeded()
+        guard badgeSpinTimer == nil else { return }
+        let interval = Self.spinSecondsPerTurn / Double(Self.spinFrameCount)
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+            guard let self, !self.badgeSpinFrames.isEmpty else { return }
+            self.badgeSpinFrame = (self.badgeSpinFrame + 1) % self.badgeSpinFrames.count
+            self.statusItem.button?.image = self.badgeSpinFrames[self.badgeSpinFrame]
+        }
+        // `.common` so it keeps turning while the menu is open.
+        RunLoop.main.add(timer, forMode: .common)
+        badgeSpinTimer = timer
+    }
+
+    /// Frames depend on everything that affects the drawing — including the menu
+    /// bar's appearance, since the outline follows `labelColor`.
+    private func rebuildSpinFramesIfNeeded() {
+        let style = sleep.badgeStyle
+        let appearance = statusItem.button?.effectiveAppearance.name.rawValue ?? ""
+        let key = "\(style.scale)|\(style.outline)|\(style.scheduled)|\(style.dynamic)|\(appearance)"
+        guard key != badgeSpinFramesKey || badgeSpinFrames.isEmpty else { return }
+        badgeSpinFramesKey = key
+        badgeSpinFrames = (0 ..< Self.spinFrameCount).compactMap { i in
+            var frame = style
+            frame.rotation = (2 * .pi) * Double(i) / Double(Self.spinFrameCount)
+            return Self.statusImage(active: sleep.isActive, badge: .both,
+                                    suppressed: false, style: frame)
+        }
+    }
+
+    /// Which dot to draw, or nil for none. Only meaningful while engaged: the
+    /// badge says *why* the Mac is awake, so it has nothing to say when it isn't.
+    private func currentBadge() -> ClaimBadge? {
+        guard sleep.isActive, sleep.isNotificationEnabled(.badgeWhenEngaged) else { return nil }
+        let scheduled = sleep.hasSliderClaim || sleep.scheduleClaimEnd != nil
+        let dynamic = !sleep.dynamicClaims.isEmpty
+        switch (scheduled, dynamic) {
+        case (true, true):  return .both
+        case (false, true): return .dynamic
+        default:            return .scheduled
+        }
+    }
+
+    /// Spelling out when suppression lifts is the only way the user can tell a
+    /// "skip this block" from a latch they have to clear themselves.
+    private func suppressTitle() -> String {
+        guard sleep.isSuppressed, let until = sleep.suppressedUntil,
+              until < .distantFuture else { return "Suppress all claims" }
+        return "Suppress all claims (until \(SleepManager.clockString(until)))"
     }
 
     private func showMessage(_ text: String) {
@@ -564,33 +724,134 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     /// The menu bar image. A template lizard (AppKit auto-tints it for the menu
-    /// bar) normally; when `badged`, a non-template composite tinted to the
-    /// current menu bar color with a red dot in the bottom-right corner — a red
-    /// dot can't live in a template image. `appearanceObservation` re-renders on
-    /// light/dark menu bar flips.
-    private func statusImage(active: Bool, badged: Bool) -> NSImage? {
+    /// bar) normally; `suppressed` adds a caution badge, and `badged` makes a
+    /// non-template composite tinted to the current menu bar color with a green
+    /// dot in the bottom-right corner — a colored dot can't live in a template
+    /// image. `appearanceObservation` re-renders on light/dark menu bar flips.
+    ///
+    /// `badged` and `suppressed` can't both be set: the badge only appears while
+    /// engaged, and suppression is what stops Newt engaging.
+    ///
+    /// Static so it can be rendered without a live status item.
+    static func statusImage(active: Bool, badge: ClaimBadge?, suppressed: Bool,
+                            style: BadgeStyle = BadgeStyle()) -> NSImage? {
         let symbol = active ? "lizard.fill" : "lizard"
         guard let base = NSImage(systemSymbolName: symbol,
                                  accessibilityDescription: "Newt") else { return nil }
-        guard badged else {
+        if suppressed {
+            let image = NSImage(size: base.size, flipped: false) { rect in
+                base.draw(in: rect)
+                NSColor.labelColor.set()
+                rect.fill(using: .sourceAtop)
+                drawCautionBadge(in: rect)
+                return true
+            }
+            image.isTemplate = false
+            return image
+        }
+        guard let badge else {
             base.isTemplate = true
             return base
         }
         let image = NSImage(size: base.size, flipped: false) { rect in
             // Tint the glyph with the menu bar text color (resolves against the
-            // current drawing appearance), then stamp the red dot on top.
+            // current drawing appearance), then stamp the dot on top.
             base.draw(in: rect)
             NSColor.labelColor.set()
             rect.fill(using: .sourceAtop)
-            let d = rect.height * 0.42
-            // Bottom-right corner (rect is unflipped, so minY is the bottom).
-            let dot = NSRect(x: rect.maxX - d, y: rect.minY, width: d, height: d)
-            NSColor.systemRed.setFill()
-            NSBezierPath(ovalIn: dot).fill()
+            drawClaimBadge(in: rect, badge: badge, style: style)
             return true
         }
         image.isTemplate = false
         return image
+    }
+
+    /// What's holding the Mac awake, for the indicator dot: the long-lived
+    /// controls (slider, schedule), transient agent claims, or both at once.
+    enum ClaimBadge {
+        case scheduled
+        case dynamic
+        case both
+    }
+
+    /// Green for the slider/schedule, blue for dynamic claims — so a glance says
+    /// whether the Mac is awake because you asked, or because an agent is busy.
+    /// Both at once splits the dot down the middle: equal halves read as "a mix"
+    /// at menu bar size, where a small inner core just reads as the outer color.
+    ///
+    /// Two things make the dot legible over an arbitrary wallpaper, and neither
+    /// is the color itself. A gap punched out of the lizard stops the badge
+    /// merging into the glyph, and an outline in `labelColor` — the one color
+    /// AppKit has already chosen to be readable against this menu bar —
+    /// separates it from whatever is showing through behind.
+    static func drawClaimBadge(in rect: NSRect, badge: ClaimBadge, style: BadgeStyle) {
+        let d = rect.height * style.scale
+        // Bottom-right corner (rect is unflipped, so minY is the bottom).
+        let dot = NSRect(x: rect.maxX - d, y: rect.minY, width: d, height: d)
+        let ring = max(1, (rect.height * 0.06).rounded())
+
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current?.compositingOperation = .destinationOut
+        NSColor.black.setFill()
+        NSBezierPath(ovalIn: dot.insetBy(dx: -ring, dy: -ring)).fill()
+        NSGraphicsContext.restoreGraphicsState()
+
+        switch badge {
+        case .scheduled:
+            style.scheduled.setFill()
+            NSBezierPath(ovalIn: dot).fill()
+        case .dynamic:
+            style.dynamic.setFill()
+            NSBezierPath(ovalIn: dot).fill()
+        case .both:
+            NSGraphicsContext.saveGraphicsState()
+            NSBezierPath(ovalIn: dot).addClip()
+            // Turn the split about the dot's centre. The halves are drawn
+            // oversized so no corner of them can rotate into view inside the
+            // circular clip.
+            let spin = NSAffineTransform()
+            spin.translateX(by: dot.midX, yBy: dot.midY)
+            spin.rotate(byRadians: CGFloat(style.rotation))
+            spin.translateX(by: -dot.midX, yBy: -dot.midY)
+            spin.concat()
+            let over = d * 2
+            style.scheduled.setFill()
+            NSRect(x: dot.midX - over, y: dot.midY - over, width: over, height: over * 2).fill()
+            style.dynamic.setFill()
+            NSRect(x: dot.midX, y: dot.midY - over, width: over, height: over * 2).fill()
+            NSGraphicsContext.restoreGraphicsState()
+        }
+
+        guard style.outline else { return }
+        NSColor.labelColor.setStroke()
+        let stroke = NSBezierPath(ovalIn: dot.insetBy(dx: ring / 2, dy: ring / 2))
+        stroke.lineWidth = ring
+        stroke.stroke()
+    }
+
+    /// A yellow caution triangle in the bottom-right corner, sitting in a gap
+    /// punched out of the lizard so the two shapes don't read as one blob.
+    ///
+    /// The two palette colors map to the symbol's mark and triangle layers in
+    /// that order, giving an opaque badge with a dark exclamation. Tinting the
+    /// plain symbol instead would leave the mark as negative space, which loses
+    /// contrast against a light menu bar.
+    private static func drawCautionBadge(in rect: NSRect) {
+        let config = NSImage.SymbolConfiguration(paletteColors: [.black, .systemYellow])
+        guard let warning = NSImage(systemSymbolName: "exclamationmark.triangle.fill",
+                                    accessibilityDescription: nil)?
+                                .withSymbolConfiguration(config) else { return }
+        let side = rect.height * 0.62
+        // Bottom-right corner (rect is unflipped, so minY is the bottom).
+        let badge = NSRect(x: rect.maxX - side, y: rect.minY, width: side, height: side)
+
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current?.compositingOperation = .destinationOut
+        NSColor.black.setFill()
+        NSBezierPath(ovalIn: badge.insetBy(dx: -rect.height * 0.06, dy: -rect.height * 0.06)).fill()
+        NSGraphicsContext.restoreGraphicsState()
+
+        warning.draw(in: badge)
     }
 
     // MARK: - NSView tooltip owner
@@ -601,7 +862,14 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                     stringForToolTip tag: NSView.ToolTipTag,
                     point: NSPoint,
                     userData: UnsafeMutableRawPointer?) -> String {
-        sleep.isActive ? sleep.displayString() : ""
+        // The caution badge says "off deliberately"; the tooltip is where the
+        // user finds out until when.
+        if sleep.isSuppressed { return suppressTitle() }
+        guard sleep.isActive else { return "" }
+        // With the slider off, the schedule is the only thing holding the Mac
+        // awake, and the slider's own label would just read "off".
+        guard !sleep.hasSliderClaim else { return sleep.displayString() }
+        return sleep.scheduleSummary().map { "Schedule — \($0)" } ?? sleep.displayString()
     }
 
     // MARK: - NSMenuDelegate
@@ -641,20 +909,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             sleep.setSliderPosition(visual)
         }
         durationSliderView.endDragIfNeeded()
-        if let fixed = fixedClickSliderView {
-            let fixedVisual = max(1, fixed.currentPosition)
-            if fixedVisual != sleep.fixedClickSliderPosition {
-                sleep.fixedClickSliderPosition = fixedVisual
-            }
-            fixed.endDragIfNeeded()
-        }
-        if let range = rangeSliderView {
-            if range.currentStart != sleep.displayWindowStart
-                || range.currentEnd != sleep.displayWindowEnd {
-                sleep.setDisplayWindow(start: range.currentStart, end: range.currentEnd)
-            }
-            range.endDragIfNeeded()
-        }
+        // The "On for" slider moved into the settings window, where a window
+        // closing mid-drag isn't a thing — only the sliders still hosted in the
+        // menu need this rescue.
     }
 }
 
