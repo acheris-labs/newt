@@ -11,6 +11,8 @@ auto-update prompt.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-15
+
 ### Added
 - **A claim limit** (*Settings ▸ General*) caps how long a dynamic claim may be
   held. An agent normally releases its own, and Newt drops one whose process
@@ -397,7 +399,8 @@ Initial public release.
   `SMAppService.daemon(plistName:)`.
 - Lizard menu bar icon (filled when engaged, outline when idle).
 
-[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/acheris-labs/newt/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/acheris-labs/newt/compare/v0.4.3...v0.5.0
 [0.4.3]: https://github.com/acheris-labs/newt/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/acheris-labs/newt/compare/v0.4.1...v0.4.2
