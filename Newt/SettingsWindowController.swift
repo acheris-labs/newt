@@ -29,6 +29,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                                          target: nil, action: nil)
     /// Only on Macs that have a battery to run down.
     private var batterySlider: BatterySliderView?
+    private var claimLifetimeSlider: DurationSliderView!
 
     // Schedule
     private let scheduleBox = NSButton(checkboxWithTitle: "Follow this schedule",
@@ -133,6 +134,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         resumeBox.state = sleep.resumeOnLaunch ? .on : .off
         autoUpdateBox.state = updater.automaticallyChecksForUpdates ? .on : .off
         batterySlider?.refresh(value: sleep.batteryThresholdPercent)
+        claimLifetimeSlider.refresh(
+            position: sleep.dynamicClaimMaxPosition,
+            displayText: SleepManager.displayString(forSliderPosition: sleep.dynamicClaimMaxPosition),
+            enabled: true)
 
         for (mode, box) in wakeModeBoxes {
             box.state = sleep.isEnabled(mode) ? .on : .off
@@ -213,30 +218,52 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     private func generalView() -> NSView {
         let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 320))
-        for (i, box) in [loginBox, resumeBox, autoUpdateBox].enumerated() {
+        let sliderHeight = 44.0, gapBeforeHint = 6.0, gapAfterHint = 20.0
+        var top = 304.0
+
+        for box in [loginBox, resumeBox, autoUpdateBox] {
             box.target = self
             box.action = #selector(generalChanged)
-            box.frame = NSRect(x: 20, y: 262 - CGFloat(i) * 28, width: 480, height: 20)
+            box.frame = NSRect(x: 20, y: top - 20, width: 480, height: 20)
             view.addSubview(box)
+            top -= 26
         }
+        top -= 12
 
         // Desktops have nothing to run down, so the cutoff would be meaningless.
         if sleep.hasBattery {
             let slider = BatterySliderView(initialValue: sleep.batteryThresholdPercent) {
                 [weak self] value in self?.sleep.batteryThresholdPercent = value
             }
-            slider.frame.origin = NSPoint(x: 20, y: 150)
+            slider.frame.origin = NSPoint(x: 20, y: top - sliderHeight)
             view.addSubview(slider)
             batterySlider = slider
-            addHint("While Newt is holding your Mac awake on battery, it lets go at this "
-                    + "level so macOS can sleep before the battery runs flat — and picks up "
-                    + "again once you plug in. 0% turns the cutoff off.",
-                    to: view, y: 96)
+            top -= sliderHeight + gapBeforeHint
+            top = addHint("On battery, Newt lets go at this level so macOS can sleep before the "
+                          + "battery runs flat, then picks up again once you plug in. "
+                          + "0% turns it off.",
+                          to: view, top: top) - gapAfterHint
         }
 
-        addHint("The Keep awake slider, the schedule switch, Suppress and Claims stay in "
-                + "the menu — they're the ones worth reaching for on the spot.",
-                to: view, y: 30)
+        // "Max claim life" overruns the slider's 100pt title label.
+        claimLifetimeSlider = DurationSliderView(
+            title: "Claim limit",
+            initialPosition: sleep.dynamicClaimMaxPosition,
+            initialText: SleepManager.displayString(forSliderPosition: sleep.dynamicClaimMaxPosition),
+            textForPosition: { SleepManager.displayString(forSliderPosition: $0) }
+        ) { [weak self] position in
+            self?.sleep.dynamicClaimMaxPosition = position
+            self?.refresh()
+        }
+        claimLifetimeSlider.frame.origin = NSPoint(x: 20, y: top - sliderHeight)
+        view.addSubview(claimLifetimeSlider)
+        top -= sliderHeight + gapBeforeHint
+
+        addHint("A backstop for dynamic claims: if an agent never releases one — a subagent, "
+                + "a state we don't model, or just sitting waiting for an answer — Newt lets "
+                + "go after this long, so a runaway can't flatten your battery. "
+                + "Off means no limit.",
+                to: view, top: top)
         return view
     }
 
@@ -289,7 +316,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         layoutWakeModes()
         addHint("Turning every mode off leaves Newt with nothing to do — it will "
                 + "refuse to hold your Mac awake until at least one is back on.",
-                to: view, y: 26)
+                to: view, top: 60)
         return view
     }
 
@@ -350,7 +377,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         addHint("Ticking one adds hooks to that tool's own settings file, so it can tell Newt "
                 + "when it starts and stops working. Newt merges with whatever is already "
                 + "there and backs the file up first; unticking removes only what Newt added.",
-                to: view, y: 140)
+                to: view, top: 174)
         return view
     }
 
@@ -378,7 +405,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         addHint("Drag on a row to add hours; drag a block or its edges to adjust. "
                 + "Drag a block's right edge into the row below to run it overnight. "
                 + "Select a block and press Delete to remove it.",
-                to: view, y: 0)
+                to: view, top: 34)
         return view
     }
 
@@ -416,7 +443,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         fixedSlider.frame.origin = NSPoint(x: 28, y: 130)
         view.addSubview(fixedSlider)
 
-        addHint("Right-clicking the icon always opens the menu.", to: view, y: 80)
+        addHint("Right-clicking the icon always opens the menu.", to: view, top: 114)
         return view
     }
 
@@ -494,9 +521,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         dotPreview.imageScaling = .scaleNone
         view.addSubview(dotPreview)
 
-        addHint("The dot says what's holding your Mac awake: the Keep awake slider or the "
-                + "schedule, an AI agent, or — split down the middle — both at once.",
-                to: view, y: 16)
         return view
     }
 
@@ -553,18 +577,22 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - Shared bits
 
-    /// `y` is where a two-line hint would sit; longer text grows downward from
-    /// the same top edge rather than being clipped, which a fixed height did.
-    private func addHint(_ text: String, to view: NSView, y: CGFloat) {
+    /// Places a hint with its top edge at `top` and returns its bottom edge, so
+    /// callers can flow the next control beneath it. Anchoring the top rather
+    /// than the bottom keeps the gap above a hint constant however many lines
+    /// it wraps to.
+    @discardableResult
+    private func addHint(_ text: String, to view: NSView, top: CGFloat) -> CGFloat {
         let width = 520.0
         let hint = NSTextField(wrappingLabelWithString: text)
         hint.font = .systemFont(ofSize: 11)
         hint.textColor = .secondaryLabelColor
         hint.preferredMaxLayoutWidth = width
-        let height = max(34, hint.sizeThatFits(
-            NSSize(width: width, height: .greatestFiniteMagnitude)).height)
-        hint.frame = NSRect(x: 20, y: y + 34 - height, width: width, height: height)
+        let height = hint.sizeThatFits(
+            NSSize(width: width, height: .greatestFiniteMagnitude)).height
+        hint.frame = NSRect(x: 20, y: top - height, width: width, height: height)
         view.addSubview(hint)
+        return top - height
     }
 
     private func showError(_ message: String) {

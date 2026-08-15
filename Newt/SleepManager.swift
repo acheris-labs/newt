@@ -208,6 +208,32 @@ final class SleepManager {
         }
     }
 
+    /// Slider position for the longest a dynamic claim may be held before Newt
+    /// lets go of it. Position 0 ("off") and the top stop ("indefinite") both
+    /// mean no limit; the stops between are the same 30m…24h ladder as Keep
+    /// awake, so the control reads the same way.
+    var dynamicClaimMaxPosition: Int = 0 {
+        didSet {
+            dynamicClaimMaxPosition = max(0, min(Self.sliderDurations.count - 1,
+                                                 dynamicClaimMaxPosition))
+            guard dynamicClaimMaxPosition != oldValue else { return }
+            UserDefaults.standard.set(dynamicClaimMaxPosition,
+                                      forKey: "DynamicClaimMaxPosition")
+            applyDynamicClaimLimit()
+            onChange?()
+        }
+    }
+
+    /// Seconds a dynamic claim may live, or nil for no limit.
+    var dynamicClaimMaxSeconds: TimeInterval? {
+        let value = Self.sliderDurations[dynamicClaimMaxPosition]
+        return value > 0 ? TimeInterval(value) : nil
+    }
+
+    private func applyDynamicClaimLimit() {
+        dynamicClaims.maxLifetime = dynamicClaimMaxSeconds
+    }
+
     /// Spin the split dot while both a long-lived claim and a dynamic one are in
     /// force. Costs a repeating timer for as long as that lasts, so it's
     /// switchable.
@@ -398,6 +424,13 @@ final class SleepManager {
             suppressedUntil = Date(timeIntervalSinceReferenceDate: stamp)
         }
         dynamicClaims.onChange = { [weak self] in self?.reconcile() }
+        dynamicClaims.onExpired = { [weak self] claim in
+            guard let self else { return }
+            let held = SleepManager.displayString(forSliderPosition: self.dynamicClaimMaxPosition)
+            self.onHelperMessage?("Released \(claim.agent) — \(claim.label): held over \(held)")
+        }
+        dynamicClaimMaxPosition = defaults.object(forKey: "DynamicClaimMaxPosition") as? Int ?? 0
+        applyDynamicClaimLimit()
         registerSystemObservers()
     }
 
@@ -993,6 +1026,28 @@ final class SleepManager {
         guard let first = claims.first else { return nil }
         if claims.count == 1 { return "\(first.agent) is working — \(first.label)" }
         return "\(claims.count) agents working"
+    }
+
+    /// Everything holding the Mac awake right now, one line each, for the icon's
+    /// tooltip. Empty when nothing is — including when a veto is refusing, since
+    /// then the claims exist but aren't doing anything.
+    func awakeReasons() -> [String] {
+        guard isActive else { return [] }
+        var lines: [String] = []
+        switch state {
+        case .off:
+            break
+        case .indefinite:
+            lines.append("Keep awake — indefinite")
+        case .timed(let until):
+            lines.append("Keep awake — \(Self.formatRemaining(until.timeIntervalSinceNow))"
+                         + " left, until \(Self.clockString(until))")
+        }
+        if let end = scheduleClaimEnd {
+            lines.append("Schedule — until \(Self.clockString(end))")
+        }
+        lines.append(contentsOf: dynamicClaims.sortedClaims.map(\.menuTitle))
+        return lines
     }
 
     /// What the schedule is doing, short enough to sit on the end of the "Use

@@ -29,18 +29,18 @@ The menu bar icon tells you the current state:
 | --- | --- |
 | Outline lizard | Newt is idle — your Mac sleeps normally |
 | Filled lizard | Newt is holding your Mac awake |
-| Filled lizard with a green dot | Held by the Keep awake slider or the schedule (dot is optional) |
-| …with a blue dot | Held by an AI agent that's working |
-| …with a split green/blue dot | Both at once |
-
-Those two colours are the defaults and can be changed in Settings.
+| Filled lizard with a dot | Same, with the optional indicator dot turned on |
 | Lizard with a yellow warning badge | **Suppress all claims** is on — Newt won't hold your Mac awake at all |
 
-The filled lizard means your Mac is being held awake right now, whether that's
-the Keep awake slider or the schedule doing it.
+The dot's colour says *what* is holding your Mac awake. Out of the box that's
+green for the Keep awake slider or the schedule and blue for a dynamic claim,
+with the dot split down the middle when both are holding at once; you can pick
+your own colours in Settings.
 
-Hover the icon to see the time remaining. Click it to open the menu (you can
-change what a left click does in **Settings**).
+Hover the icon to see everything currently holding your Mac awake — the Keep
+awake slider with its time remaining, the schedule, and any dynamic claims — or
+why it isn't, when Suppress or the battery cutoff is refusing. Click it to open
+the menu (you can change what a left click does in **Settings**).
 
 ## Use
 
@@ -57,7 +57,7 @@ Click the menu bar icon.
   *next Mon 08:00*, *suppressed until 20:00*, or *no hours set*. You set the
   hours themselves in *Settings ▸ Schedule*.
 - **Suppress all claims** — "not right now". While it's ticked, nothing keeps
-  your Mac awake: not the schedule, not the Keep awake slider, not an AI agent.
+  your Mac awake: not the schedule, not the Keep awake slider, not a dynamic claim.
   The menu bar icon gets a yellow warning badge so you can't leave it on by
   accident, and hovering tells you when it lifts. Ticking it during a scheduled
   block only skips the rest of *that* block — it clears itself when the block
@@ -75,7 +75,25 @@ Click the menu bar icon.
 
 ## Settings
 
-**Settings…** in the menu (or ⌘,) opens a window with six tabs.
+**Settings…** in the menu (or ⌘,) opens a window with six tabs, listed here in
+the order they appear.
+
+**General**
+
+- **Open at login** — launch Newt when you log in.
+- **Resume last state at launch** — off by default. When on, if Newt was keeping
+  your Mac awake when it last quit, it picks up where it left off; the duration
+  restarts from full.
+- **Check for updates automatically** — Newt updates itself.
+- **Low battery cutoff** (0–30%) — while Newt is holding your Mac awake *on
+  battery*, if the charge falls to or below this floor Newt lets go so macOS can
+  sleep before the battery runs flat, then picks up again once you plug in. 0
+  disables it. Below the floor the Keep awake slider greys out so you can't
+  accidentally re-arm it.
+- **Claim limit** — the longest a dynamic claim may be held before Newt lets go
+  of it, whatever the agent says. A backstop: agents normally release their own
+  claims, and Newt drops one whose process dies, but neither helps if the agent
+  is alive and simply never releases. Off means no limit.
 
 **Wake Modes** — which parts of sleep to prevent: keep the display on, keep the
 system awake when idle, prevent system sleep, and stay awake with the lid
@@ -84,20 +102,6 @@ limits that behaviour to a time of day (say 09:00–23:00 — outside it the scr
 may sleep while everything else stays awake) and **Pause on battery** lets the
 display sleep whenever you're unplugged.
 
-**Integrations** — register dynamic claims with the coding tools you use, so
-they can hold your Mac awake while they work. Claude Code is supported today;
-others are listed greyed out until they are. See
-[below](#keeping-the-mac-awake-while-an-ai-agent-works).
-
-**General** — *Open at login*, *Low battery cutoff* (0–30%: while Newt is
-holding your Mac awake *on battery*, if the charge falls to or below this floor
-Newt lets go so macOS can sleep before the battery runs flat, then picks up
-again once you plug in; 0 disables it, and below the floor the Keep awake slider
-greys out so you can't accidentally re-arm it), *Resume last state at launch* (off by default;
-when on, if Newt was keeping your Mac awake when it last quit it picks up where
-it left off, with the duration restarting from full), and *Check for updates
-automatically*.
-
 **Schedule** — *Follow this schedule* plus the weekly grid. See
 [Setting a schedule](#setting-a-schedule).
 
@@ -105,14 +109,17 @@ automatically*.
 last duration you used, or toggle a fixed duration you set here. Right-clicking
 always opens the menu.
 
+**Integrations** — register dynamic claims with the coding tools you use, so
+they can hold your Mac awake while they work. Claude Code is supported today;
+others are listed greyed out until they are. See
+[below](#keeping-the-mac-awake-while-an-ai-agent-works).
+
 **Notifications** — *Notify when keep-awake expires*, plus the indicator dot:
-whether to show it, how big it is, whether to outline it, whether it spins when
-both a long-lived claim and an agent are holding at once, and what colour each
-state is. The outline is the thing that keeps the dot readable when a bright
-wallpaper shows through the menu bar, so leave it on unless you have a reason
-not to. The colours default to green and blue and can be anything you like —
-*Use Default Colours* puts them back. A live preview shows all three dot states
-as you adjust them.
+whether to show it, how big it is, whether to outline it, whether it spins while
+both kinds of claim are holding, and a colour for each. The outline is what
+keeps the dot readable when a bright wallpaper shows through the menu bar, so
+leave it on unless you have a reason not to. *Use Default Colours* puts the
+colours back. A live preview shows all three states as you adjust them.
 
 ## Setting a schedule
 
@@ -186,7 +193,7 @@ normally the moment it stops.
 Turn it on by ticking **Claude Code** in *Settings ▸ Integrations*.
 Newt adds three hooks to `~/.claude/settings.json`, merging with what's there
 and backing the file up first. Claude usually picks the hooks up straight away;
-if a session you already have open doesn't start claiming, restart it. The same
+if a session you already have open doesn't start claiming, restart it.
 Unticking it removes only what Newt added.
 
 From then on, Newt holds your Mac awake from the moment you send a prompt until
