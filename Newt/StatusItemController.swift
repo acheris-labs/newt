@@ -863,13 +863,23 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                     point: NSPoint,
                     userData: UnsafeMutableRawPointer?) -> String {
         // The caution badge says "off deliberately"; the tooltip is where the
-        // user finds out until when.
-        if sleep.isSuppressed { return suppressTitle() }
-        guard sleep.isActive else { return "" }
-        // With the slider off, the schedule is the only thing holding the Mac
-        // awake, and the slider's own label would just read "off".
-        guard !sleep.hasSliderClaim else { return sleep.displayString() }
-        return sleep.scheduleSummary().map { "Schedule — \($0)" } ?? sleep.displayString()
+        // user finds out until when. Phrased as a statement — `suppressTitle()`
+        // is the menu command, which reads as an instruction here.
+        if sleep.isSuppressed {
+            let until = sleep.suppressedUntil.flatMap { $0 < .distantFuture ? $0 : nil }
+                .map { " until \(SleepManager.clockString($0))" } ?? ""
+            return "Suppressed\(until) — nothing is keeping your Mac awake"
+        }
+        if let blocked = sleep.blockedByBattery {
+            return "Held off — battery \(blocked.percent)% is at or below your"
+                 + " \(blocked.threshold)% floor"
+        }
+        // Every contributor, not just the first: "why is my Mac awake" usually
+        // has more than one answer, and the icon alone can't say which.
+        let reasons = sleep.awakeReasons()
+        guard !reasons.isEmpty else { return "" }
+        guard reasons.count > 1 else { return reasons[0] }
+        return (["Keeping your Mac awake:"] + reasons.map { "  • \($0)" }).joined(separator: "\n")
     }
 
     // MARK: - NSMenuDelegate

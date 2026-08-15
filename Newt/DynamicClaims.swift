@@ -58,17 +58,40 @@ struct DynamicClaim {
 
 /// Tracks the dynamic claims currently in force.
 ///
-/// An agent releases its own claim at the end of a turn, but that can't be the
-/// only path — a killed agent never runs its release hook. Each claim with a
-/// resolved pid therefore also gets a process-exit watcher, so the claim goes
-/// away the moment its owner does. Anything neither path catches is evictable
-/// from the menu.
+/// A claim is normally released by its own agent at the end of a turn, but that
+/// can't be the only path. There are four ways one goes away, and each has a
+/// hole the others cover:
+///
+/// 1. The agent's release hook — misses if the hook never fires, which can
+///    happen inside a subagent, in a state we don't model, or while the agent
+///    sits waiting for an answer.
+/// 2. A process-exit watcher — no help while the process is alive and stuck.
+/// 3. Newt restarting — clears everything, but shouldn't be relied on.
+/// 4. Revoking it from the menu — manual.
+///
+/// `maxLifetime` is the fifth: whatever else fails, a claim is let go once it
+/// has been held too long, so a runaway agent can't quietly flatten the battery.
 final class DynamicClaimRegistry {
     private(set) var claims: [String: DynamicClaim] = [:]
     private var watchers: [String: DispatchSourceProcess] = [:]
+    private var expiries: [String: Timer] = [:]
+
+    /// How long a claim may be held before Newt lets go of it regardless. nil
+    /// means no limit — the behaviour before this existed.
+    var maxLifetime: TimeInterval? {
+        didSet {
+            guard maxLifetime != oldValue else { return }
+            claims.values.forEach(armExpiry)
+        }
+    }
 
     /// Fired on the main queue whenever the set of claims changes.
     var onChange: (() -> Void)?
+
+    /// Fired when a claim is let go for outliving `maxLifetime`, so the app can
+    /// say so — this is the net catching something the others missed, and
+    /// silently dropping a claim would look like a bug.
+    var onExpired: ((DynamicClaim) -> Void)?
 
     var isEmpty: Bool { claims.isEmpty }
 
@@ -87,6 +110,9 @@ final class DynamicClaimRegistry {
             stored = DynamicClaim(id: claim.id, agent: claim.agent, pid: claim.pid,
                                 tty: claim.tty, label: claim.label, since: existing.since)
             if existing.pid == claim.pid {
+                // `since` is preserved above, so the deadline doesn't move: a
+                // claim re-raised every turn still expires a fixed time after
+                // it first appeared, which is the point of a maximum.
                 claims[claim.id] = stored
                 onChange?()
                 return
@@ -94,6 +120,7 @@ final class DynamicClaimRegistry {
         }
         claims[claim.id] = stored
         watch(stored)
+        armExpiry(stored)
         onChange?()
     }
 
@@ -101,6 +128,7 @@ final class DynamicClaimRegistry {
     func remove(id: String) -> Bool {
         guard claims.removeValue(forKey: id) != nil else { return false }
         watchers.removeValue(forKey: id)?.cancel()
+        expiries.removeValue(forKey: id)?.invalidate()
         onChange?()
         return true
     }
@@ -110,7 +138,26 @@ final class DynamicClaimRegistry {
         claims.removeAll()
         watchers.values.forEach { $0.cancel() }
         watchers.removeAll()
+        expiries.values.forEach { $0.invalidate() }
+        expiries.removeAll()
         onChange?()
+    }
+
+    /// One-shot timer at the claim's deadline. Armed off `since`, not "now", so
+    /// changing the setting re-dates existing claims rather than granting them a
+    /// fresh full lifetime — and a claim already past the new limit goes at once.
+    private func armExpiry(_ claim: DynamicClaim) {
+        expiries.removeValue(forKey: claim.id)?.invalidate()
+        guard let maxLifetime else { return }
+        let deadline = claim.since.addingTimeInterval(maxLifetime)
+        let timer = Timer(fire: max(deadline, Date().addingTimeInterval(0.1)),
+                          interval: 0, repeats: false) { [weak self] _ in
+            guard let self, let expired = self.claims[claim.id] else { return }
+            self.remove(id: claim.id)
+            self.onExpired?(expired)
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        expiries[claim.id] = timer
     }
 
     private func watch(_ claim: DynamicClaim) {

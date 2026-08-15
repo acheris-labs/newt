@@ -75,8 +75,12 @@ memory only — a Newt restart drops them, which fails safe, and the agent
 re-claims next turn.
 Each one with a resolved pid gets a `DispatchSourceProcess` exit watcher, since
 an agent that is killed never runs its release hook (`SessionEnd` is explicitly
-not guaranteed to fire). There is no expiry backstop by design; the Claims
-submenu is the last resort.
+not guaranteed to fire). Neither helps when the agent is alive but never
+releases — a subagent, or waiting on the user — so `DynamicClaimRegistry
+.maxLifetime` (Settings ▸ General, `DynamicClaimMaxPosition`) is a fifth net
+that lets go after a set time. It's armed off the claim's `since`, so
+re-raising the same id doesn't buy more time; that's what makes it a maximum
+rather than an idle timeout.
 
 The schedule's `boundaryTimer` is a one-shot armed at the next edge, not a
 poll. Wall-clock jumps it can't see — sleep/wake, clock set, time zone — are

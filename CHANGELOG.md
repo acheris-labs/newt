@@ -11,6 +11,18 @@ auto-update prompt.
 
 ## [Unreleased]
 
+### Added
+- **A claim limit** (*Settings ▸ General*) caps how long a dynamic claim may be
+  held. An agent normally releases its own, and Newt drops one whose process
+  dies — but if the agent stays alive and simply never releases, because the
+  work moved into a subagent or it's sitting waiting for an answer, nothing used
+  to let go. Now Newt does, so a stuck agent can't quietly flatten your battery.
+  Off by default, and set with the same slider as Keep awake.
+- **Hovering the menu bar icon now lists everything holding your Mac awake**,
+  not just the first thing — the Keep awake slider with its time remaining, the
+  schedule, and each dynamic claim. When nothing is holding it because
+  Suppress or the low battery cutoff is refusing, the tooltip says that instead.
+
 ## [0.5.0] - 2026-08-14
 
 ### Added
