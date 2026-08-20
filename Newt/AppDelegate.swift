@@ -13,6 +13,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         userDriverDelegate: nil)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // An upgraded Newt may ship a newer plugin than the one already sitting
+        // in an agent's config directory; that file is otherwise only written
+        // when the user toggles the checkbox.
+        IntegrationInstaller.refreshInstalledPlugins()
         statusController = StatusItemController(updater: updaterController)
         // URLs that arrived before the controller existed (cold-start launch
         // via a newt:// link) are replayed now.

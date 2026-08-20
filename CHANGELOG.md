@@ -11,6 +11,13 @@ auto-update prompt.
 
 ## [Unreleased]
 
+### Added
+- **Newt now keeps your Mac awake while [opencode](https://opencode.ai) works**,
+  the same way it already does for Claude Code. Tick **opencode** in
+  *Settings ▸ Integrations*. Newt adds a small plugin file of its own at
+  `~/.config/opencode/plugin/` — none of your opencode settings are read or
+  changed, and unticking deletes the file again.
+
 ## [0.6.0] - 2026-08-15
 
 ### Added

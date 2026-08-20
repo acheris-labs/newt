@@ -190,15 +190,21 @@ just a coding agent grinding through tool calls. Newt can notice that and hold
 your Mac awake for as long as the agent is actually working — and let it sleep
 normally the moment it stops.
 
-Turn it on by ticking **Claude Code** in *Settings ▸ Integrations*.
-Newt adds three hooks to `~/.claude/settings.json`, merging with what's there
-and backing the file up first. Claude usually picks the hooks up straight away;
-if a session you already have open doesn't start claiming, restart it.
-Unticking it removes only what Newt added.
+Turn it on in *Settings ▸ Integrations*, which lists the agents Newt knows:
 
-From then on, Newt holds your Mac awake from the moment you send a prompt until
-the agent finishes replying. An agent session left sitting idle at the prompt
-holds nothing, so your Mac still sleeps when you walk away.
+- **Claude Code** — Newt adds three hooks to `~/.claude/settings.json`, merging
+  with whatever is already there and backing the file up first.
+- **opencode** — Newt adds a small plugin file of its own at
+  `~/.config/opencode/plugin/`. None of your opencode settings are read or
+  changed, and unticking deletes the file again.
+
+In both cases Newt only ever touches what it added, and unticking takes it back
+out. An agent usually notices straight away; if a session you already have open
+doesn't start claiming, restart it.
+
+From then on, Newt holds your Mac awake for as long as the agent is actually
+working, and lets go when it finishes. An agent session left sitting idle at the
+prompt holds nothing, so your Mac still sleeps when you walk away.
 
 This is a third way of holding the Mac awake, independent of the Keep awake
 slider and the schedule — any one of them is enough. **Suppress all claims** and
@@ -214,7 +220,7 @@ terminal:
 
 ```
 claude — newt (ttys002)
-claude — agent-scoreboard (ttys014)
+opencode — my-project (no tty)
 ```
 
 Click a dynamic claim and Newt tells you exactly what it is — which agent,
@@ -230,9 +236,6 @@ finishes, and if it's killed outright Newt notices the process is gone and
 releases on its behalf. The list is there for the case where neither happened —
 and a claim showing *(owner unknown)* is one Newt couldn't tie to a process, so
 the dialog says so, because that's the one with nothing else to catch it.
-
-Newt watches the agent's process too, so if it's killed outright the claim is
-released even though no hook ran.
 
 
 ## Troubleshooting
