@@ -11,6 +11,8 @@ auto-update prompt.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-21
+
 ### Added
 - **Newt now keeps your Mac awake while [opencode](https://opencode.ai) works**,
   the same way it already does for Claude Code. Tick **opencode** in
@@ -410,7 +412,8 @@ Initial public release.
   `SMAppService.daemon(plistName:)`.
 - Lizard menu bar icon (filled when engaged, outline when idle).
 
-[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/acheris-labs/newt/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/acheris-labs/newt/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/acheris-labs/newt/compare/v0.4.3...v0.5.0
 [0.4.3]: https://github.com/acheris-labs/newt/compare/v0.4.2...v0.4.3
