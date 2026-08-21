@@ -149,8 +149,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         displayHoursSlider.refresh(start: sleep.displayWindowStart,
                                    end: sleep.displayWindowEnd, enabled: true)
 
-        for agent in HookInstaller.all {
-            integrationBoxes[agent.id]?.state = HookInstaller.isInstalled(agent) ? .on : .off
+        for agent in IntegrationInstaller.all {
+            integrationBoxes[agent.id]?.state = IntegrationInstaller.isInstalled(agent) ? .on : .off
         }
 
         scheduleBox.state = sleep.scheduleEnabled ? .on : .off
@@ -363,20 +363,17 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         title.frame = NSRect(x: 20, y: 274, width: 480, height: 18)
         view.addSubview(title)
 
-        for (i, agent) in HookInstaller.all.enumerated() {
+        for (i, agent) in IntegrationInstaller.all.enumerated() {
             let box = NSButton(checkboxWithTitle: agent.name, target: self,
                                action: #selector(integrationChanged(_:)))
             box.frame = NSRect(x: 28, y: 240 - CGFloat(i) * 28, width: 300, height: 20)
-            // Greyed out is enough to say "not yet" — spelling it out in the
-            // title just makes the row shout about what it can't do.
-            box.isEnabled = agent.isAvailable
             view.addSubview(box)
             integrationBoxes[agent.id] = box
         }
 
-        addHint("Ticking one adds hooks to that tool's own settings file, so it can tell Newt "
-                + "when it starts and stops working. Newt merges with whatever is already "
-                + "there and backs the file up first; unticking removes only what Newt added.",
+        addHint("Ticking one lets that tool tell Newt when it starts and stops working, so "
+                + "your Mac stays awake through a long run and sleeps normally afterwards. "
+                + "Newt only ever touches what it added, and unticking takes it back out.",
                 to: view, top: 174)
         return view
     }

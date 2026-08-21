@@ -35,7 +35,9 @@ Two binaries inside one `.app` bundle, plus a small shared protocol.
 - `StatusItemController.swift` owns the `NSStatusItem`, the menu, the custom slider views (`DurationSliderView`, `BatterySliderView`), and the left/right click router. Calls into `SleepManager` for all state changes.
 - `SleepManager.swift` is the **single source of truth** for keep-awake state. Holds the IOKit `IOPMAssertion` IDs, the slider position, the expiry `Timer`, and the user's per-mechanism `WakeMode` toggles + `LeftClickAction` preference. Surfaces changes back to the controller through `onChange` and `onHelperMessage` callbacks. Anywhere else in the code that "wants to engage" must go through `SleepManager.setSliderPosition(_:)` or `performLeftClickToggle()` — never call assertion APIs directly.
 - `Schedule.swift` is the weekly-schedule model: `ScheduleBlock` / `WeeklySchedule`, the coverage and boundary date maths, and JSON persistence. Pure logic, no AppKit — keep it that way, it's the part worth testing standalone.
-- `HookInstaller.swift` installs Newt's hooks into an AI agent's settings file (`~/.claude/settings.json`), which other tools also write to. Back up, add only our entries, identify them by the `newt://claim?` marker in the command, never rewrite a key we didn't add. The hooks are self-contained shell one-liners — `sed` pulls `session_id` off stdin, and `$PPID` **is** the agent process (a `command` hook runs as its direct child), which is where the pid to watch and the tty to label with come from. No CLI, no jq/python dependency.
+- `IntegrationInstaller.swift` installs Newt into an AI agent, by one of two `Method`s. Both identify our own entries by the `newt://claim?` marker and touch nothing else.
+  - `.jsonHooks` (Claude Code) merges into `~/.claude/settings.json`, which other tools also write to: back up first, add only our entries, never rewrite a key we didn't add. The hooks are self-contained shell one-liners — `sed` pulls `session_id` off stdin, and `$PPID` **is** the agent process (a `command` hook runs as its direct child), which is where the pid to watch and the tty to label with come from. No jq/python dependency.
+  - `.pluginFile` (opencode) writes `Newt/Resources/newt-opencode.js` to `~/.config/opencode/plugin/`, a file Newt owns outright — so no merge, no backup, and uninstall is a delete. It refuses to overwrite or delete a file at that path without our marker. opencode has **no** hook that fires when a turn starts (its only shell hooks are `experimental.hook.file_edited` and `session_completed`), so a plugin is the sole way to raise a claim; it globs `{plugin,plugins}/*.{ts,js}` in its config dirs at startup, and `opencode.json` is never read. A path-loaded plugin **must** export `id` as well as `server` or it fails to load — the published types mark `id` optional because npm plugins take theirs from `package.json`, and the failure is only a log line. The plugin claims on `session.status` → `busy` and releases on `idle`; `retry` holds, since that's a stalled request still working. `refreshInstalledPlugins()` rewrites a stale plugin at launch, since a Newt upgrade otherwise leaves the old file in place.
 - `SettingsWindowController.swift` is the app's only `NSWindow`: an `NSTabView` of General / Schedule / Left Click / Notifications. Every control writes straight through to `SleepManager` on change — no OK or Apply. `SPUUpdaterProviding` is a one-property protocol so this file doesn't import Sparkle and can be exercised in a harness with a stub.
 - `ScheduleGridView.swift` is the custom weekly grid (drag to add/move/resize, overnight wrap). It's hosted by the Schedule tab, but knows nothing about it — it just reports a `WeeklySchedule` through `onChange`.
 - `HelperClient.swift` registers the daemon via `SMAppService.daemon(plistName:)` and brokers XPC calls (`setDisableSleep`) over an `NSXPCConnection` with identifier-pinned code requirements on both ends.
@@ -95,6 +97,33 @@ covered by three notification observers that just call `reconcile()`.
 `BatteryThresholdPercent`, `WakeMode.<rawValue>` (one per case), `LeftClickAction`, `LastUsedSliderPosition`, `FixedClickSliderPosition`, `ScheduleEnabled`, `ScheduleBlocks` (JSON `Data`), `SuppressedUntil` (`Double`, absent = not suppressed), `BadgeSizeScale` (`Double`), `BadgeOutline` (`Bool`), `BadgeSpin` (`Bool`), `BadgeColorScheduled` / `BadgeColorDynamic` (`[Double]` sRGB components; **absent means "use the system colour"**, which keeps the default dynamic across light/dark — don't write the system colour's components into them). All have sensible defaults for fresh installs — never add a migration that breaks an upgrade.
 
 Note when testing by hand: `defaults write … -float` is **single precision**, which rounds a seconds-since-2001 timestamp to the nearest ~26 s. Write `SuppressedUntil` with `-date` or from code, or you'll chase a timer bug that isn't there.
+
+## Distribution
+
+Two channels, and they must not fight:
+
+- **Homebrew installs**, via the `newt` cask in `acheris-labs/homebrew-tools`.
+  `packaging/newt-cask.rb.tmpl` is the source of truth; the release workflow's
+  `brew` job renders it with `envsubst` (`VERSION`, `SHA_DMG` from the DMG's
+  `.sha256` sidecar) and pushes it to the tap over SSH, using the
+  `HOMEBREW_TAP_SSH_KEY` deploy key. A missing key warns rather than fails.
+- **Sparkle updates.** The cask carries `auto_updates true`, which is what stops
+  `brew upgrade` reinstalling over a copy Sparkle has already moved past.
+
+Two things in the cask are load-bearing:
+
+- `uninstall quit:` — the helper only restores `pmset disablesleep 0` when the
+  running app's XPC connection drops, so quitting is what stops an uninstall
+  leaving a Mac that won't sleep. There is no `launchctl` stanza because the
+  daemon is registered from inside the bundle by `SMAppService`, not from
+  `/Library/LaunchDaemons`.
+- `uninstall_preflight` runs `Newt --uninstall-integrations`, which unwinds the
+  hooks and plugin files Newt wrote into *other* tools' config while the bundle
+  still exists. It is guarded on `File.executable?` and `must_succeed: false`:
+  a failing preflight aborts the entire uninstall, which would leave an app that
+  can't be removed — worse than leftover hooks. That flag is handled in
+  `main.swift` before `NSApplication` starts, and is not a CLI: nothing is
+  symlinked onto PATH.
 
 ## Release flow
 

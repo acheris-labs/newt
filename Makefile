@@ -26,7 +26,7 @@ APP_SRC     := Newt/main.swift Newt/AppDelegate.swift \
                Newt/HelperClient.swift Newt/LoginItemController.swift \
                Newt/BatteryMonitor.swift Newt/NotificationManager.swift \
                Newt/Schedule.swift Newt/ScheduleGridView.swift \
-               Newt/DynamicClaims.swift Newt/HookInstaller.swift \
+               Newt/DynamicClaims.swift Newt/IntegrationInstaller.swift \
                Newt/SettingsWindowController.swift \
                Shared/HelperProtocol.swift
 HELPER_SRC  := NewtHelper/main.swift NewtHelper/HelperService.swift \
@@ -124,6 +124,7 @@ build: $(SPARKLE_FRAMEWORK)
 	cp $(HELPER_NAME).plist $(DAEMONS)/$(HELPER_NAME).plist
 	@mkdir -p $(CONTENTS)/Resources
 	cp Newt/Newt.icns $(CONTENTS)/Resources/Newt.icns
+	cp Newt/Resources/*.js $(CONTENTS)/Resources/
 	# Embed Sparkle.framework (replaces any prior copy to stay idempotent).
 	rm -rf $(CONTENTS)/Frameworks/Sparkle.framework
 	cp -R $(SPARKLE_FRAMEWORK) $(CONTENTS)/Frameworks/

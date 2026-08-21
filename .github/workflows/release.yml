@@ -115,8 +115,12 @@ jobs:
         run: |
           VERSIONED="Newt-${{ steps.v.outputs.version }}.dmg"
           mv build/Newt.dmg "$VERSIONED"
+          # The .sha256 sidecar lets the cask job read the hash without
+          # re-downloading the DMG.
+          shasum -a 256 "$VERSIONED" > "$VERSIONED.sha256"
           echo "path=$VERSIONED" >> "$GITHUB_OUTPUT"
-          ls -la "$VERSIONED"
+          echo "sha=$VERSIONED.sha256" >> "$GITHUB_OUTPUT"
+          ls -la "$VERSIONED"*
 
       - name: Cleanup keychain
         if: always()
@@ -171,7 +175,8 @@ jobs:
           fi
           gh release create "${{ steps.v.outputs.tag }}" \
             "${ARGS[@]}" \
-            "${{ steps.dmg.outputs.path }}"
+            "${{ steps.dmg.outputs.path }}" \
+            "${{ steps.dmg.outputs.sha }}"
 
       # --- Sparkle appcast --------------------------------------------------
       # Regenerate appcast.xml from all releases and push to gh-pages, where
@@ -290,3 +295,64 @@ jobs:
               git push origin gh-pages
             fi
           )
+
+  # Regenerate the cask in acheris-labs/homebrew-tools from the notarized DMG.
+  # Homebrew does the first install, Sparkle does every update after it — the
+  # cask carries `auto_updates true`, so `brew upgrade` won't fight the copy
+  # Sparkle has already moved on. The tap is only how someone gets Newt the
+  # first time, and how they uninstall it cleanly.
+  #
+  # The default GITHUB_TOKEN cannot write to another repository, so this pushes
+  # over SSH with a deploy key whose write access is scoped to the tap and
+  # nothing else.
+  brew:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: v
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Update cask
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAP_SSH_KEY: ${{ secrets.HOMEBREW_TAP_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          # Without the deploy key the release itself is still fine — the cask
+          # just has to be pushed by hand. Warn rather than fail the run.
+          if [ -z "${TAP_SSH_KEY:-}" ]; then
+            echo "::warning::HOMEBREW_TAP_SSH_KEY not set; skipping cask update"
+            exit 0
+          fi
+
+          export VERSION="${{ steps.v.outputs.version }}"
+          export SHA_DMG="$(gh release download "${{ steps.v.outputs.tag }}" \
+            --pattern "Newt-${VERSION}.dmg.sha256" -O - | cut -d' ' -f1)"
+          test -n "$SHA_DMG" || { echo "could not read DMG sha256"; exit 1; }
+          envsubst < packaging/newt-cask.rb.tmpl > newt.rb
+
+          mkdir -p ~/.ssh
+          printf '%s\n' "$TAP_SSH_KEY" > ~/.ssh/tap_key
+          chmod 600 ~/.ssh/tap_key
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/tap_key -o IdentitiesOnly=yes"
+
+          git clone git@github.com:acheris-labs/homebrew-tools.git tap
+          mkdir -p tap/Casks
+          cp newt.rb tap/Casks/newt.rb
+          cd tap
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add Casks/newt.rb
+          if git diff --cached --quiet; then
+            echo "cask unchanged; nothing to push"
+          else
+            git commit -m "chore: update newt cask to ${{ steps.v.outputs.tag }}"
+            git push
+          fi

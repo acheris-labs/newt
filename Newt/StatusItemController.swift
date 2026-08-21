@@ -328,43 +328,58 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         sleep.dynamicClaims.removeAll()
     }
 
-    /// Add or remove the hooks that let an agent raise a claim while it works.
-    /// Editing someone else's settings file is worth confirming first, and worth
-    /// naming the backup afterwards.
+    /// Add or remove the integration that lets an agent raise a claim while it
+    /// works. Changing a file in the user's home directory is worth confirming
+    /// first, and the wording has to match what actually happens — the two
+    /// methods differ in whether anything of the user's is touched at all.
     private func toggleIntegration(id: String) {
-        // Belt and braces: the checkbox for an unsupported tool is disabled, but
-        // this must never write to a settings file Newt hasn't been taught.
-        guard let agent = HookInstaller.agent(id: id), agent.isAvailable else { return }
-        let installed = HookInstaller.isInstalled(agent)
+        guard let agent = IntegrationInstaller.agent(id: id) else { return }
+        let installed = IntegrationInstaller.isInstalled(agent)
         NSApp.activate(ignoringOtherApps: true)
+
+        let noun: String
+        let detail: String
+        switch agent.method {
+        case .jsonHooks:
+            noun = "Hooks"
+            detail = installed
+                ? "Newt will remove its hooks from:\n\(agent.path.path)\n\nAnything else in that file is left alone."
+                : "Newt will add three hooks to:\n\(agent.path.path)\n\nThey tell Newt when \(agent.name) starts and finishes working. Anything already in that file is left alone, and a backup is made first."
+        case .pluginFile:
+            noun = "Plugin"
+            detail = installed
+                ? "Newt will delete the plugin it added at:\n\(agent.path.path)\n\nNothing else in \(agent.name)'s configuration is touched."
+                : "Newt will add a plugin at:\n\(agent.path.path)\n\nIt tells Newt when \(agent.name) starts and finishes working. \(agent.name) picks up plugins from that folder on its own, so none of your settings are changed."
+        }
 
         let confirm = NSAlert()
         confirm.messageText = installed
             ? "Stop keeping your Mac awake while \(agent.name) works?"
             : "Keep your Mac awake while \(agent.name) works?"
-        confirm.informativeText = (installed
-            ? "Newt will remove its hooks from:\n\(agent.settings.path)\n\nAnything else in that file is left alone."
-            : "Newt will add three hooks to:\n\(agent.settings.path)\n\nThey tell Newt when \(agent.name) starts and finishes working. Anything already in that file is left alone, and a backup is made first.")
+        confirm.informativeText = detail
         confirm.alertStyle = .informational
-        confirm.addButton(withTitle: installed ? "Remove Hooks" : "Add Hooks")
+        confirm.addButton(withTitle: installed ? "Remove \(noun)" : "Add \(noun)")
         confirm.addButton(withTitle: "Cancel")
         guard confirm.runModal() == .alertFirstButtonReturn else { return }
 
         do {
-            let outcome = installed ? try HookInstaller.uninstall(agent)
-                                    : try HookInstaller.install(agent)
+            let outcome = installed ? try IntegrationInstaller.uninstall(agent)
+                                    : try IntegrationInstaller.install(agent)
+            let backupLine = { (backup: URL?) in
+                backup.map { "\n\nBackup: \($0.path)" } ?? ""
+            }
             switch outcome {
             case .installed(let backup):
-                showAlert("Hooks added",
-                          informative: "\(agent.name) usually picks these up straight away. If a session that's already open doesn't, restart it.\n\nBackup: \(backup.path)")
+                showAlert("\(noun) added",
+                          informative: "\(agent.name) usually picks this up straight away. If a session that's already open doesn't, restart it.\(backupLine(backup))")
             case .removed(let backup):
-                showAlert("Hooks removed",
-                          informative: "If a session that's already open keeps claiming, restart it.\n\nBackup: \(backup.path)")
+                showAlert("\(noun) removed",
+                          informative: "If a session that's already open keeps claiming, restart it.\(backupLine(backup))")
             case .alreadyInstalled, .notInstalled:
                 break
             }
         } catch {
-            showAlert("Couldn't update \(agent.name)'s settings", informative: "\(error)")
+            showAlert("Couldn't set up \(agent.name)", informative: "\(error)")
         }
         refresh()
     }
