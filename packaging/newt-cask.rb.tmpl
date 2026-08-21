@@ -1,0 +1,69 @@
+# Cask template for acheris-labs/homebrew-tools (Casks/newt.rb).
+# Rendered by the release workflow with envsubst: VERSION and SHA_DMG come
+# from the release's notarized DMG.
+#
+# Homebrew installs Newt; Sparkle updates it. `auto_updates true` is what keeps
+# those two from fighting — it tells `brew upgrade` to leave the cask alone, so
+# the version on disk can move ahead of the version in the tap without Homebrew
+# trying to reinstall over the top of it.
+cask "newt" do
+  version "$VERSION"
+  sha256 "$SHA_DMG"
+
+  url "https://github.com/acheris-labs/newt/releases/download/v#{version}/Newt-#{version}.dmg"
+  name "Newt"
+  desc "Menu bar utility that prevents sleep, including with the lid closed"
+  homepage "https://github.com/acheris-labs/newt"
+
+  # Sparkle owns updates from here on; see the note above.
+  auto_updates true
+  depends_on macos: :ventura
+
+  app "Newt.app"
+
+  # Newt has no Dock icon, so a fresh install is otherwise completely
+  # invisible — nothing launches and the caveats scroll past.
+  postflight do
+    system_command "/usr/bin/open", args: ["-a", "#{appdir}/Newt.app"]
+  end
+
+  # Unwind the hooks and plugin files Newt wrote into other tools' config while
+  # the bundle is still on disk. Afterwards it's gone, and those entries would
+  # keep firing at an app that no longer exists. Only Newt's own entries are
+  # touched.
+  # Guarded on both sides: an uninstall must still complete if the binary is
+  # already gone or refuses to run, which is otherwise fatal — Homebrew aborts
+  # the whole uninstall on a failed preflight and the app can't be removed at
+  # all. Leftover hooks are a nuisance; an unremovable app is worse.
+  uninstall_preflight do
+    binary = "#{appdir}/Newt.app/Contents/MacOS/Newt"
+    if File.executable?(binary)
+      system_command binary, args: ["--uninstall-integrations"],
+                             must_succeed: false, print_stderr: false
+    end
+  end
+
+  # Quitting matters more here than for most apps: the privileged helper
+  # restores `pmset disablesleep 0` when Newt's XPC connection drops, so this
+  # is what guarantees an uninstall can't leave a Mac that refuses to sleep.
+  # The helper itself needs no launchctl stanza — it's registered from inside
+  # the bundle via SMAppService, not from /Library/LaunchDaemons.
+  uninstall quit: "net.acheris.newt"
+
+  zap trash: [
+    "~/Library/Caches/net.acheris.newt",
+    "~/Library/Preferences/net.acheris.newt.plist",
+  ]
+
+  caveats <<~EOS
+    Newt is opening now — look for the lizard in the menu bar (top-right of
+    the screen).
+
+    To hold the Mac awake with the lid closed, Newt needs to approve its
+    background helper: macOS will ask on first launch, or you can allow it
+    under System Settings ▸ General ▸ Login Items & Extensions.
+
+    Newt updates itself from here on, so `brew upgrade` will leave it alone.
+    Use "Check for Updates…" in its menu to update on the spot.
+  EOS
+end

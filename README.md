@@ -7,9 +7,20 @@ Apple Silicon, macOS 13+. Developer ID signed and notarized.
 
 ## Install
 
-Grab the latest `.dmg` from
+```
+brew install --cask acheris-labs/tools/newt
+```
+
+Newt opens by itself once it's installed — look for the lizard in the menu bar.
+
+Homebrew installs Newt; after that Newt updates itself, so `brew upgrade` will
+leave it alone. Use **Check for Updates…** in its menu to update on the spot.
+Uninstalling with `brew uninstall --cask newt` also unhooks Newt from any
+agents you connected it to.
+
+Or, without Homebrew: grab the latest `.dmg` from
 [Releases](https://github.com/acheris-labs/newt/releases) and drag `Newt.app`
-into `/Applications`.
+into `/Applications`. Updates still come to you the same way.
 
 On first launch macOS will ask you to approve Newt's background helper under
 **System Settings ▸ General ▸ Login Items & Extensions**. Enable it, then quit

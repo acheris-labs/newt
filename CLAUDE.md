@@ -98,6 +98,33 @@ covered by three notification observers that just call `reconcile()`.
 
 Note when testing by hand: `defaults write … -float` is **single precision**, which rounds a seconds-since-2001 timestamp to the nearest ~26 s. Write `SuppressedUntil` with `-date` or from code, or you'll chase a timer bug that isn't there.
 
+## Distribution
+
+Two channels, and they must not fight:
+
+- **Homebrew installs**, via the `newt` cask in `acheris-labs/homebrew-tools`.
+  `packaging/newt-cask.rb.tmpl` is the source of truth; the release workflow's
+  `brew` job renders it with `envsubst` (`VERSION`, `SHA_DMG` from the DMG's
+  `.sha256` sidecar) and pushes it to the tap over SSH, using the
+  `HOMEBREW_TAP_SSH_KEY` deploy key. A missing key warns rather than fails.
+- **Sparkle updates.** The cask carries `auto_updates true`, which is what stops
+  `brew upgrade` reinstalling over a copy Sparkle has already moved past.
+
+Two things in the cask are load-bearing:
+
+- `uninstall quit:` — the helper only restores `pmset disablesleep 0` when the
+  running app's XPC connection drops, so quitting is what stops an uninstall
+  leaving a Mac that won't sleep. There is no `launchctl` stanza because the
+  daemon is registered from inside the bundle by `SMAppService`, not from
+  `/Library/LaunchDaemons`.
+- `uninstall_preflight` runs `Newt --uninstall-integrations`, which unwinds the
+  hooks and plugin files Newt wrote into *other* tools' config while the bundle
+  still exists. It is guarded on `File.executable?` and `must_succeed: false`:
+  a failing preflight aborts the entire uninstall, which would leave an app that
+  can't be removed — worse than leftover hooks. That flag is handled in
+  `main.swift` before `NSApplication` starts, and is not a CLI: nothing is
+  symlinked onto PATH.
+
 ## Release flow
 
 1. Bump entry in `CHANGELOG.md`: rename `## [Unreleased]` to `## [x.y.z] - YYYY-MM-DD`, add a fresh empty `[Unreleased]` block, and add a compare-link in the footer.

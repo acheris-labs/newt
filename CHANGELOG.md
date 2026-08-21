@@ -17,6 +17,10 @@ auto-update prompt.
   *Settings ▸ Integrations*. Newt adds a small plugin file of its own at
   `~/.config/opencode/plugin/` — none of your opencode settings are read or
   changed, and unticking deletes the file again.
+- **Newt installs with Homebrew**: `brew install --cask acheris-labs/tools/newt`.
+  Newt still updates itself, so `brew upgrade` leaves it alone — use
+  **Check for Updates…** as before. Uninstalling with Homebrew also unhooks Newt
+  from any agents you connected it to.
 
 ## [0.6.0] - 2026-08-15
 
