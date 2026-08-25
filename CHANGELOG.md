@@ -19,6 +19,10 @@ auto-update prompt.
   configurable spell, Newt takes its icon out of the menu bar. Opening Newt
   again brings it back, as does anything that starts holding the Mac awake.
   Defaults to *never*, so nothing changes unless you ask for it.
+- A **fill colour for the menu bar icon while Newt is holding your Mac awake**
+  (*Settings ▸ Notifications*), alongside the indicator dot colours. Left the
+  menu bar's own colour by default; the idle lizard is never tinted, so the two
+  states stay tellable apart. *Use Default Colours* puts it back.
 
 ## [0.7.0] - 2026-08-21
 

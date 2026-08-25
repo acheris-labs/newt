@@ -755,7 +755,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private func rebuildSpinFramesIfNeeded() {
         let style = sleep.badgeStyle
         let appearance = statusItem.button?.effectiveAppearance.name.rawValue ?? ""
-        let key = "\(style.scale)|\(style.outline)|\(style.scheduled)|\(style.dynamic)|\(appearance)"
+        let key = "\(style.scale)|\(style.outline)|\(style.scheduled)|\(style.dynamic)"
+            + "|\(String(describing: style.awakeFill))|\(appearance)"
         guard key != badgeSpinFramesKey || badgeSpinFrames.isEmpty else { return }
         badgeSpinFramesKey = key
         badgeSpinFrames = (0 ..< Self.spinFrameCount).compactMap { i in
@@ -813,10 +814,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     /// The menu bar image. A template lizard (AppKit auto-tints it for the menu
-    /// bar) normally; `suppressed` adds a caution badge, and `badged` makes a
-    /// non-template composite tinted to the current menu bar color with a green
-    /// dot in the bottom-right corner — a colored dot can't live in a template
-    /// image. `appearanceObservation` re-renders on light/dark menu bar flips.
+    /// bar) whenever nothing needs colour; `suppressed` adds a caution badge,
+    /// and a claim badge or a custom awake fill makes a non-template composite
+    /// instead — neither a coloured dot nor a coloured glyph can live in a
+    /// template image. `appearanceObservation` re-renders on light/dark menu bar
+    /// flips.
     ///
     /// `badged` and `suppressed` can't both be set: the badge only appears while
     /// engaged, and suppression is what stops Newt engaging.
@@ -838,17 +840,20 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             image.isTemplate = false
             return image
         }
-        guard let badge else {
+        // The custom fill is for "Newt is holding your Mac awake"; idle stays
+        // the menu bar's own colour, or the state would stop being readable.
+        let fill = active ? style.awakeFill : nil
+        guard badge != nil || fill != nil else {
             base.isTemplate = true
             return base
         }
         let image = NSImage(size: base.size, flipped: false) { rect in
-            // Tint the glyph with the menu bar text color (resolves against the
-            // current drawing appearance), then stamp the dot on top.
+            // Tint the glyph, then stamp the dot on top. `labelColor` resolves
+            // against the current drawing appearance.
             base.draw(in: rect)
-            NSColor.labelColor.set()
+            (fill ?? .labelColor).set()
             rect.fill(using: .sourceAtop)
-            drawClaimBadge(in: rect, badge: badge, style: style)
+            if let badge { drawClaimBadge(in: rect, badge: badge, style: style) }
             return true
         }
         image.isTemplate = false

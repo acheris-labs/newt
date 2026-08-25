@@ -299,22 +299,34 @@ final class SleepManager {
         }
     }
 
-    /// Everything the status item needs to draw the dot.
+    /// Colour to fill the lizard with while Newt is holding the Mac awake, or
+    /// nil to leave it the menu bar's own text colour.
+    var awakeIconColor: NSColor? {
+        didSet {
+            guard awakeIconColor != oldValue else { return }
+            Self.store(awakeIconColor, forKey: "IconColorAwake")
+            onChange?()
+        }
+    }
+
+    /// Everything the status item needs to draw the icon.
     var badgeStyle: BadgeStyle {
         BadgeStyle(scale: badgeSizeScale,
                    outline: badgeOutline,
                    scheduled: scheduledBadgeColor ?? .systemGreen,
-                   dynamic: dynamicBadgeColor ?? .systemBlue)
+                   dynamic: dynamicBadgeColor ?? .systemBlue,
+                   awakeFill: awakeIconColor)
     }
 
-    /// True when both dots are on the stock colours.
+    /// True when the dots and the lizard are all on the stock colours.
     var badgeColorsAreDefault: Bool {
-        scheduledBadgeColor == nil && dynamicBadgeColor == nil
+        scheduledBadgeColor == nil && dynamicBadgeColor == nil && awakeIconColor == nil
     }
 
     func resetBadgeColors() {
         scheduledBadgeColor = nil
         dynamicBadgeColor = nil
+        awakeIconColor = nil
     }
 
     /// Stored as sRGB components rather than an archived `NSColor` so the value
@@ -450,6 +462,7 @@ final class SleepManager {
         badgeSpin = defaults.object(forKey: "BadgeSpin") as? Bool ?? true
         scheduledBadgeColor = Self.storedColor(forKey: "BadgeColorScheduled")
         dynamicBadgeColor = Self.storedColor(forKey: "BadgeColorDynamic")
+        awakeIconColor = Self.storedColor(forKey: "IconColorAwake")
         // Weekly schedule. Missing keys → the workweek default, switched off.
         scheduleEnabled = defaults.object(forKey: "ScheduleEnabled") as? Bool ?? false
         schedule = WeeklySchedule.load()
@@ -1179,6 +1192,9 @@ struct BadgeStyle {
     var scheduled: NSColor = .systemGreen
     /// Dynamic claims, usually an AI agent mid-turn.
     var dynamic: NSColor = .systemBlue
+    /// Fills the lizard while Newt is holding the Mac awake. Nil leaves it the
+    /// menu bar's own text colour, which is what a template image would give.
+    var awakeFill: NSColor?
     /// Radians the split is turned through. Only the two-tone "both" dot uses
     /// it — a solid disc looks identical however far you rotate it.
     var rotation: Double = 0

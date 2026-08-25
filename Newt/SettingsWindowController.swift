@@ -61,6 +61,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                                    target: nil, action: nil)
     private let sizeSlider = NSSlider(value: 0.46, minValue: 0.30, maxValue: 0.70,
                                       target: nil, action: nil)
+    private let awakeIconWell = NSColorWell()
     private let scheduledWell = NSColorWell()
     private let dynamicWell = NSColorWell()
     private let resetColorsButton = NSButton(title: "Use Default Colours",
@@ -191,8 +192,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         spinBox.isEnabled = dotOn
         scheduledWell.isEnabled = dotOn
         dynamicWell.isEnabled = dotOn
-        resetColorsButton.isEnabled = dotOn && !sleep.badgeColorsAreDefault
+        resetColorsButton.isEnabled = !sleep.badgeColorsAreDefault
         // Don't fight the colour panel while it's open on this well.
+        if !awakeIconWell.isActive {
+            awakeIconWell.color = sleep.awakeIconColor ?? .labelColor
+        }
         if !scheduledWell.isActive { scheduledWell.color = sleep.badgeStyle.scheduled }
         if !dynamicWell.isActive { dynamicWell.color = sleep.badgeStyle.dynamic }
         if sizeSlider.doubleValue != sleep.badgeSizeScale {
@@ -489,11 +493,26 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - Notifications
 
     private func notificationsView() -> NSView {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 326))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 400))
         expiryBox.target = self
         expiryBox.action = #selector(expiryToggled)
-        expiryBox.frame = NSRect(x: 20, y: 274, width: 480, height: 20)
+        expiryBox.frame = NSRect(x: 20, y: 348, width: 480, height: 20)
         view.addSubview(expiryBox)
+
+        let iconHeader = NSTextField(labelWithString: "Menu bar icon")
+        iconHeader.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
+        iconHeader.frame = NSRect(x: 20, y: 300, width: 300, height: 18)
+        view.addSubview(iconHeader)
+
+        // Not part of the indicator dot, and so not switched off with it — the
+        // lizard is there whether or not the dot is.
+        let awakeLabel = NSTextField(labelWithString: "Fill when awake")
+        awakeLabel.frame = NSRect(x: 40, y: 276, width: 140, height: 18)
+        view.addSubview(awakeLabel)
+        awakeIconWell.frame = NSRect(x: 186, y: 272, width: 44, height: 24)
+        awakeIconWell.target = self
+        awakeIconWell.action = #selector(colorChanged(_:))
+        view.addSubview(awakeIconWell)
 
         let dotHeader = NSTextField(labelWithString: "Indicator dot")
         dotHeader.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
@@ -565,8 +584,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc private func colorChanged(_ sender: NSColorWell) {
-        if sender === scheduledWell { sleep.scheduledBadgeColor = sender.color }
-        else { sleep.dynamicBadgeColor = sender.color }
+        switch sender {
+        case awakeIconWell:  sleep.awakeIconColor = sender.color
+        case scheduledWell:  sleep.scheduledBadgeColor = sender.color
+        default:             sleep.dynamicBadgeColor = sender.color
+        }
         refresh()
     }
 
