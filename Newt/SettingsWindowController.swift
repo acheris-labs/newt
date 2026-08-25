@@ -30,6 +30,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     /// Only on Macs that have a battery to run down.
     private var batterySlider: BatterySliderView?
     private var claimLifetimeSlider: DurationSliderView!
+    private var hideIconSlider: DurationSliderView!
 
     // Schedule
     private let scheduleBox = NSButton(checkboxWithTitle: "Follow this schedule",
@@ -71,7 +72,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var previewSpinTimer: Timer?
     private var previewAngle: Double = 0
 
-    private static let contentSize = NSSize(width: 600, height: 396)
+    private static let contentSize = NSSize(width: 600, height: 490)
 
     init(sleep: SleepManager, login: LoginItemController, updater: SPUUpdaterProviding) {
         self.sleep = sleep
@@ -101,16 +102,27 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         window.delegate = self
         windowFrameAutosaveName = "NewtSettingsWindow"
+        // The autosaved frame carries the height this window used to be, and it
+        // isn't resizable, so restoring it wholesale would clip the last control
+        // on the tallest tab. Position is worth keeping; size isn't.
+        window.setContentSize(Self.contentSize)
         window.center()
         refresh()
     }
 
     required init?(coder: NSCoder) { nil }
 
+    /// Wraps a tab's fixed-height layout in a container that pins it to the top.
+    /// Tab views are stretched to the tab view's content rect, and every layout
+    /// here uses absolute frames — so without this the shorter tabs would be
+    /// pushed to the bottom of the window by whichever tab is tallest.
     private func tab(_ label: String, _ view: NSView) -> NSTabViewItem {
         let item = NSTabViewItem(identifier: label)
         item.label = label
-        item.view = view
+        let container = NSView(frame: view.bounds)
+        view.autoresizingMask = [.minYMargin]
+        container.addSubview(view)
+        item.view = container
         return item
     }
 
@@ -137,6 +149,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         claimLifetimeSlider.refresh(
             position: sleep.dynamicClaimMaxPosition,
             displayText: SleepManager.displayString(forSliderPosition: sleep.dynamicClaimMaxPosition),
+            enabled: true)
+        hideIconSlider.refresh(
+            position: sleep.hideIconAfterPosition,
+            displayText: SleepManager.hideIconDisplayString(
+                forSliderPosition: sleep.hideIconAfterPosition),
             enabled: true)
 
         for (mode, box) in wakeModeBoxes {
@@ -217,9 +234,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - General
 
     private func generalView() -> NSView {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 320))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 420))
         let sliderHeight = 44.0, gapBeforeHint = 6.0, gapAfterHint = 20.0
-        var top = 304.0
+        var top = 398.0
 
         for box in [loginBox, resumeBox, autoUpdateBox] {
             box.target = self
@@ -259,10 +276,29 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         view.addSubview(claimLifetimeSlider)
         top -= sliderHeight + gapBeforeHint
 
-        addHint("A backstop for dynamic claims: if an agent never releases one — a subagent, "
-                + "a state we don't model, or just sitting waiting for an answer — Newt lets "
-                + "go after this long, so a runaway can't flatten your battery. "
-                + "Off means no limit.",
+        top = addHint("A backstop for dynamic claims: if an agent never releases one — a subagent, "
+                      + "a state we don't model, or just sitting waiting for an answer — Newt lets "
+                      + "go after this long, so a runaway can't flatten your battery. "
+                      + "Off means no limit.",
+                      to: view, top: top) - gapAfterHint
+
+        hideIconSlider = DurationSliderView(
+            title: "Hide icon",
+            initialPosition: sleep.hideIconAfterPosition,
+            initialText: SleepManager.hideIconDisplayString(
+                forSliderPosition: sleep.hideIconAfterPosition),
+            textForPosition: { SleepManager.hideIconDisplayString(forSliderPosition: $0) }
+        ) { [weak self] position in
+            self?.sleep.hideIconAfterPosition = position
+            self?.refresh()
+        }
+        hideIconSlider.frame.origin = NSPoint(x: 20, y: top - sliderHeight)
+        view.addSubview(hideIconSlider)
+        top -= sliderHeight + gapBeforeHint
+
+        addHint("Once nothing has held the Mac awake for this long, Newt takes its icon out "
+                + "of the menu bar. Open Newt again from Applications or Spotlight to bring "
+                + "it back.",
                 to: view, top: top)
         return view
     }
@@ -282,7 +318,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - Wake modes
 
     private func wakeModesView() -> NSView {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 320))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 326))
         let title = NSTextField(labelWithString: "Prevent these kinds of sleep:")
         title.frame = NSRect(x: 20, y: 274, width: 400, height: 18)
         view.addSubview(title)
@@ -358,7 +394,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - Integrations
 
     private func integrationsView() -> NSView {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 320))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 326))
         let title = NSTextField(labelWithString: "Register dynamic claims with common tools:")
         title.frame = NSRect(x: 20, y: 274, width: 480, height: 18)
         view.addSubview(title)
@@ -389,7 +425,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - Schedule
 
     private func scheduleView() -> NSView {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 320))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 326))
         scheduleBox.target = self
         scheduleBox.action = #selector(scheduleToggled)
         scheduleBox.frame = NSRect(x: 20, y: 274, width: 300, height: 20)
@@ -413,7 +449,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - Left click
 
     private func leftClickView() -> NSView {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 320))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 326))
         let title = NSTextField(labelWithString: "Clicking the menu bar icon:")
         title.frame = NSRect(x: 20, y: 274, width: 400, height: 18)
         view.addSubview(title)
@@ -453,7 +489,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - Notifications
 
     private func notificationsView() -> NSView {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 320))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 326))
         expiryBox.target = self
         expiryBox.action = #selector(expiryToggled)
         expiryBox.frame = NSRect(x: 20, y: 274, width: 480, height: 20)

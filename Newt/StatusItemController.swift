@@ -29,6 +29,16 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// Ticks the remaining-time label while the menu is open.
     private var menuTickTimer: Timer?
 
+    /// Idle countdown for "Hide icon". `idleSince` is when Newt last stopped
+    /// claiming anything; the timer is a one-shot armed at the deadline, not a
+    /// poll. `hiddenByIdle` separates "we put the icon away" from "macOS reaped
+    /// it", which look identical from the outside — see
+    /// `restoreStatusItemIfNeeded()`.
+    private var idleSince: Date?
+    private var idleHideTimer: Timer?
+    private var hiddenByIdle = false
+    private var menuIsOpen = false
+
     /// Spins the split dot. Runs only while that dot is actually on screen —
     /// both claim kinds up, the dot switched on, and spin enabled — so the app
     /// is idle again the moment any of those stops being true.
@@ -85,6 +95,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         // clips first — and any position the user drags to is forgotten on the
         // next launch. Never rename this: the saved position is keyed off it.
         statusItem.autosaveName = "NewtStatusItem"
+        // `isVisible` is persisted under the autosave name, so an item hidden by
+        // the idle timeout would come back hidden on the next launch. Launching
+        // Newt again is the documented way to get the icon back; it has to work.
+        statusItem.isVisible = true
         // Custom click handling: left-click obeys `LeftClickAction`, right-click
         // (and Control-click) always opens the menu. We don't assign
         // `statusItem.menu` here — assigning it would short-circuit the action
@@ -123,12 +137,16 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// drop the icon into the strip a notch clips — so toggle `isVisible` first
     /// and rebuild only if the item is genuinely gone.
     private func restoreStatusItemIfNeeded() {
+        // A hidden item has no window either, so without this the next wake
+        // would drag the icon back out on its own.
+        guard !hiddenByIdle else { return }
         guard statusItem.button?.window == nil else { return }
         statusItem.isVisible = true
         // AppKit doesn't rehost the button synchronously, so give it a runloop
         // turn before concluding the item is unrecoverable.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            guard let self, self.statusItem.button?.window == nil else { return }
+            guard let self, !self.hiddenByIdle,
+                  self.statusItem.button?.window == nil else { return }
             self.rebuildStatusItem()
         }
     }
@@ -137,8 +155,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// running — what people try when the icon has vanished. Re-asserts
     /// visibility, then falls back to the same repair path as wake.
     func revealStatusItem() {
+        hiddenByIdle = false
         statusItem.isVisible = true
         restoreStatusItemIfNeeded()
+        restartIdleHideCountdown()
     }
 
     /// Last resort, when the item can't be revived in place. The menu, slider
@@ -167,6 +187,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         }
         appearanceObservation?.invalidate()
         appearanceObservation = nil
+        idleHideTimer?.invalidate()
+        idleHideTimer = nil
         sleep.shutdown()
     }
 
@@ -574,7 +596,59 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         suppressItem.state = sleep.isSuppressed ? .on : .off
         suppressItem.title = suppressTitle()
         refreshClaims()
+        updateIdleHide()
         settingsWindow?.refresh()
+    }
+
+    /// Drives the "Hide icon" timeout. Newt counts as idle when nothing is
+    /// claiming — a claim a veto is currently refusing still keeps the icon on
+    /// screen, since that is when the tooltip explaining why is worth reading.
+    private func updateIdleHide() {
+        guard !sleep.hasAnyClaim, !menuIsOpen else {
+            if hiddenByIdle {
+                hiddenByIdle = false
+                statusItem.isVisible = true
+            }
+            cancelIdleHide()
+            return
+        }
+        guard let delay = sleep.hideIconAfterSeconds else { return cancelIdleHide() }
+        guard !hiddenByIdle else { return }
+        let since = idleSince ?? Date()
+        idleSince = since
+        let deadline = since.addingTimeInterval(delay)
+        // refresh() runs on every state change; the deadline only actually moves
+        // when the delay setting does, so don't churn a timer for the rest.
+        if let timer = idleHideTimer, abs(timer.fireDate.timeIntervalSince(deadline)) < 1 {
+            return
+        }
+        idleHideTimer?.invalidate()
+        let timer = Timer(fire: deadline, interval: 0, repeats: false) { [weak self] _ in
+            self?.hideStatusItem()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        idleHideTimer = timer
+    }
+
+    private func cancelIdleHide() {
+        idleSince = nil
+        idleHideTimer?.invalidate()
+        idleHideTimer = nil
+    }
+
+    private func restartIdleHideCountdown() {
+        cancelIdleHide()
+        updateIdleHide()
+    }
+
+    private func hideStatusItem() {
+        idleHideTimer = nil
+        guard !sleep.hasAnyClaim, !menuIsOpen else {
+            restartIdleHideCountdown()
+            return
+        }
+        hiddenByIdle = true
+        statusItem.isVisible = false
     }
 
     /// Rebuilds the Claims submenu: everything currently holding the Mac awake,
@@ -904,6 +978,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     func menuWillOpen(_ menu: NSMenu) {
+        menuIsOpen = true
+        updateIdleHide()
         // One menu opening of visibility, then retire. Messages are often posted
         // while the menu is closed, so clearing outright would mean never seen —
         // but keeping them resurfaces stale errors hours later.
@@ -923,6 +999,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     func menuDidClose(_ menu: NSMenu) {
+        menuIsOpen = false
+        restartIdleHideCountdown()
         menuTickTimer?.invalidate()
         menuTickTimer = nil
         // If the user was mid-drag and the mouse left the menu, the slider's

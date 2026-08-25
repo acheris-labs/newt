@@ -105,6 +105,12 @@ the order they appear.
   of it, whatever the agent says. A backstop: agents normally release their own
   claims, and Newt drops one whose process dies, but neither helps if the agent
   is alive and simply never releases. Off means no limit.
+- **Hide icon** — once nothing has held your Mac awake for this long, Newt takes
+  its icon out of the menu bar and gets out of your way. Open Newt again from
+  `/Applications` or Spotlight to bring it back; anything that starts holding
+  your Mac awake — the schedule reaching a block, an agent raising a claim —
+  brings it back too. Set to **never** by default, so the icon stays put unless
+  you ask for this.
 
 **Wake Modes** — which parts of sleep to prevent: keep the display on, keep the
 system awake when idle, prevent system sleep, and stay awake with the lid
@@ -281,9 +287,10 @@ quit Newt, drag `/Applications/Newt.app` to the Trash, empty it, and reinstall
 from the disk image — that clears the stale record macOS is holding.
 
 **The menu bar icon disappeared.** Open Newt again from `/Applications` (or
-Spotlight) — it restores the icon rather than starting a second copy. If your
-menu bar is crowded, ⌘-drag the icon somewhere with more room; Newt remembers
-where you put it.
+Spotlight) — it restores the icon rather than starting a second copy. If that
+keeps happening, check **Hide icon** in *Settings ▸ General*: it takes the icon
+away after a spell of Newt doing nothing. If your menu bar is crowded, ⌘-drag
+the icon somewhere with more room; Newt remembers where you put it.
 
 **My Mac still won't sleep after quitting Newt.** Newt restores normal sleep
 when it quits, and its helper does the same if Newt stops unexpectedly. To
