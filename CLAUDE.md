@@ -104,14 +104,14 @@ covered by three notification observers that just call `reconcile()`.
 
 ### UserDefaults keys (all in standard defaults)
 
-`BatteryThresholdPercent`, `WakeMode.<rawValue>` (one per case), `LeftClickAction`, `LastUsedSliderPosition`, `FixedClickSliderPosition`, `ScheduleEnabled`, `ScheduleBlocks` (JSON `Data`), `SuppressedUntil` (`Double`, absent = not suppressed), `BadgeSizeScale` (`Double`), `BadgeOutline` (`Bool`), `BadgeSpin` (`Bool`), `HideIconAfterPosition` (`Int`, **absent = the top stop, i.e. never hide**), `BadgeColorScheduled` / `BadgeColorDynamic` (`[Double]` sRGB components; **absent means "use the system colour"**, which keeps the default dynamic across light/dark — don't write the system colour's components into them). All have sensible defaults for fresh installs — never add a migration that breaks an upgrade.
+`BatteryThresholdPercent`, `WakeMode.<rawValue>` (one per case), `LeftClickAction`, `LastUsedSliderPosition`, `FixedClickSliderPosition`, `ScheduleEnabled`, `ScheduleBlocks` (JSON `Data`), `SuppressedUntil` (`Double`, absent = not suppressed), `BadgeSizeScale` (`Double`), `BadgeOutline` (`Bool`), `BadgeSpin` (`Bool`), `HideIconAfterPosition` (`Int`, **absent = the top stop, i.e. never hide**), `BadgeColorScheduled` / `BadgeColorDynamic` / `IconColorAwake` (`[Double]` sRGB components; **absent means "use the system colour"**, which keeps the default dynamic across light/dark — don't write the system colour's components into them). All have sensible defaults for fresh installs — never add a migration that breaks an upgrade.
 
 AppKit also persists the status item's visibility itself, as `NSStatusItem
 VisibleCC NewtStatusItem`. Newt never writes that key — `configureStatusItem()`
 forces `isVisible = true` at launch so an icon hidden by the idle timeout can't
 come back hidden, which would strip the only recovery path.
 
-Note when testing by hand: `defaults write … -float` is **single precision**, which rounds a seconds-since-2001 timestamp to the nearest ~26 s. Write `SuppressedUntil` with `-date` or from code, or you'll chase a timer bug that isn't there.
+Two things to know when writing these by hand. `defaults write … -float` is **single precision**, which rounds a seconds-since-2001 timestamp to the nearest ~26 s — write `SuppressedUntil` with `-date` or from code, or you'll chase a timer bug that isn't there. And `defaults write … -array 1.0 0.45 0 1` stores **strings**, which `array(forKey:) as? [Double]` reads back as nil, so a colour set that way silently does nothing; set the colour wells from the UI or write the key from code.
 
 ## Distribution
 

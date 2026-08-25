@@ -131,7 +131,10 @@ they can hold your Mac awake while they work. Claude Code is supported today;
 others are listed greyed out until they are. See
 [below](#keeping-the-mac-awake-while-an-ai-agent-works).
 
-**Notifications** — *Notify when keep-awake expires*, plus the indicator dot:
+**Notifications** — *Notify when keep-awake expires*, plus **Fill when awake**,
+a colour for the lizard itself while Newt is holding your Mac awake (left the
+menu bar's own colour by default; the idle lizard is never tinted, so you can
+always tell the two apart). Then the indicator dot:
 whether to show it, how big it is, whether to outline it, whether it spins while
 both kinds of claim are holding, and a colour for each. The outline is what
 keeps the dot readable when a bright wallpaper shows through the menu bar, so
