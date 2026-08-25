@@ -234,6 +234,39 @@ final class SleepManager {
         dynamicClaims.maxLifetime = dynamicClaimMaxSeconds
     }
 
+    /// Slider position for how long Newt stays idle before taking its icon out
+    /// of the menu bar. Position 0 ("off") and the top stop ("never") both keep
+    /// the icon on screen; the stops between are the same 30m…24h ladder as
+    /// Keep awake.
+    ///
+    /// The top stop is the default, so the icon never disappears unless the
+    /// user asks for it.
+    var hideIconAfterPosition: Int = SleepManager.sliderDurations.count - 1 {
+        didSet {
+            hideIconAfterPosition = max(0, min(Self.sliderDurations.count - 1,
+                                               hideIconAfterPosition))
+            guard hideIconAfterPosition != oldValue else { return }
+            UserDefaults.standard.set(hideIconAfterPosition,
+                                      forKey: "HideIconAfterPosition")
+            onChange?()
+        }
+    }
+
+    /// Seconds Newt may sit idle before hiding its icon, or nil to never hide.
+    var hideIconAfterSeconds: TimeInterval? {
+        let value = Self.sliderDurations[hideIconAfterPosition]
+        return value > 0 ? TimeInterval(value) : nil
+    }
+
+    /// The label for a `hideIconAfterPosition`. Deliberately not
+    /// `displayString(forSliderPosition:)`: that renders the top stop as
+    /// "indefinite", which on a *hide* control reads as the opposite of what it
+    /// means.
+    static func hideIconDisplayString(forSliderPosition p: Int) -> String {
+        sliderDurations[max(0, min(sliderDurations.count - 1, p))] == -1
+            ? "never" : displayString(forSliderPosition: p)
+    }
+
     /// Spin the split dot while both a long-lived claim and a dynamic one are in
     /// force. Costs a repeating timer for as long as that lasts, so it's
     /// switchable.
@@ -431,6 +464,8 @@ final class SleepManager {
         }
         dynamicClaimMaxPosition = defaults.object(forKey: "DynamicClaimMaxPosition") as? Int ?? 0
         applyDynamicClaimLimit()
+        hideIconAfterPosition = defaults.object(forKey: "HideIconAfterPosition") as? Int
+            ?? Self.sliderDurations.count - 1
         registerSystemObservers()
     }
 
@@ -646,9 +681,15 @@ final class SleepManager {
         return until > Date()
     }
 
+    /// True when something is asking Newt to stay awake, whether or not a veto
+    /// is currently refusing it.
+    var hasAnyClaim: Bool {
+        hasSliderClaim || scheduleClaimEnd != nil || !dynamicClaims.isEmpty
+    }
+
     private var shouldHoldAwake: Bool {
         guard blockedByBattery == nil, !isSuppressed, !enabledModes.isEmpty else { return false }
-        return hasSliderClaim || scheduleClaimEnd != nil || !dynamicClaims.isEmpty
+        return hasAnyClaim
     }
 
     /// Apply or release everything to match the current claims and vetoes.

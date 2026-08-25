@@ -84,6 +84,16 @@ that lets go after a set time. It's armed off the claim's `since`, so
 re-raising the same id doesn't buy more time; that's what makes it a maximum
 rather than an idle timeout.
 
+**Hiding the icon.** `StatusItemController` runs an idle countdown
+(`updateIdleHide()`, `HideIconAfterPosition`) that takes the status item out of
+the menu bar once `hasAnyClaim` has been false for the configured spell. A veto
+doesn't start it — a refused claim is still a claim, and that's when the tooltip
+saying why is worth reading. `hiddenByIdle` has to be checked in
+`restoreStatusItemIfNeeded()`: a hidden item and one macOS reaped both have a
+button with no window, so without the guard the next wake drags the icon back
+out. Getting it back is `revealStatusItem()`, which is already wired to
+re-opening the app.
+
 The schedule's `boundaryTimer` is a one-shot armed at the next edge, not a
 poll. Wall-clock jumps it can't see — sleep/wake, clock set, time zone — are
 covered by three notification observers that just call `reconcile()`.
@@ -94,7 +104,12 @@ covered by three notification observers that just call `reconcile()`.
 
 ### UserDefaults keys (all in standard defaults)
 
-`BatteryThresholdPercent`, `WakeMode.<rawValue>` (one per case), `LeftClickAction`, `LastUsedSliderPosition`, `FixedClickSliderPosition`, `ScheduleEnabled`, `ScheduleBlocks` (JSON `Data`), `SuppressedUntil` (`Double`, absent = not suppressed), `BadgeSizeScale` (`Double`), `BadgeOutline` (`Bool`), `BadgeSpin` (`Bool`), `BadgeColorScheduled` / `BadgeColorDynamic` (`[Double]` sRGB components; **absent means "use the system colour"**, which keeps the default dynamic across light/dark — don't write the system colour's components into them). All have sensible defaults for fresh installs — never add a migration that breaks an upgrade.
+`BatteryThresholdPercent`, `WakeMode.<rawValue>` (one per case), `LeftClickAction`, `LastUsedSliderPosition`, `FixedClickSliderPosition`, `ScheduleEnabled`, `ScheduleBlocks` (JSON `Data`), `SuppressedUntil` (`Double`, absent = not suppressed), `BadgeSizeScale` (`Double`), `BadgeOutline` (`Bool`), `BadgeSpin` (`Bool`), `HideIconAfterPosition` (`Int`, **absent = the top stop, i.e. never hide**), `BadgeColorScheduled` / `BadgeColorDynamic` (`[Double]` sRGB components; **absent means "use the system colour"**, which keeps the default dynamic across light/dark — don't write the system colour's components into them). All have sensible defaults for fresh installs — never add a migration that breaks an upgrade.
+
+AppKit also persists the status item's visibility itself, as `NSStatusItem
+VisibleCC NewtStatusItem`. Newt never writes that key — `configureStatusItem()`
+forces `isVisible = true` at launch so an icon hidden by the idle timeout can't
+come back hidden, which would strip the only recovery path.
 
 Note when testing by hand: `defaults write … -float` is **single precision**, which rounds a seconds-since-2001 timestamp to the nearest ~26 s. Write `SuppressedUntil` with `-date` or from code, or you'll chase a timer bug that isn't there.
 
