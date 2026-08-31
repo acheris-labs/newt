@@ -123,8 +123,8 @@ display sleep whenever you're unplugged.
 
 **Icon** — how the menu bar lizard looks. macOS lets your wallpaper show
 through the menu bar, and a pale one can swallow a plain lizard, so you can put
-something solid behind it: an **outline** traced around it, a soft **glow**, a
-filled **disc**, or a **circle**. Newt keeps two separate looks — one for when
+something solid behind it: an **outline** traced around it, a soft **glow**, or
+a filled **circle**. Newt keeps two separate looks — one for when
 it's idle and one for while it's holding your Mac awake — each with its own
 backdrop and its own two colours, so a glance at the menu bar tells you which
 it is.

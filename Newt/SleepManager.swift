@@ -1252,14 +1252,13 @@ final class SleepManager {
 /// Newt can't see; the *meaning* of each is fixed.
 /// What sits behind the lizard so a transparent menu bar can't swallow it.
 enum IconBackdrop: String, CaseIterable {
-    case none, outline, glow, disc, circle
+    case none, outline, glow, circle
 
     var menuTitle: String {
         switch self {
         case .none:    return "None"
         case .outline: return "Outline"
         case .glow:    return "Glow"
-        case .disc:    return "Disc"
         case .circle:  return "Circle"
         }
     }

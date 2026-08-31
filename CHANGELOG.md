@@ -15,7 +15,7 @@ auto-update prompt.
 
 - **A backdrop for the menu bar icon** (*Settings ▸ Icon*). A transparent menu
   bar lets your wallpaper through, and a pale one can swallow the lizard, so it
-  can now sit on an outline, a glow, a disc or a circle. Idle and awake are two
+  can now sit on an outline, a glow or a circle. Idle and awake are two
   separate looks — each with its own backdrop and its own two colours — so the
   icon can change shape as well as colour when Newt starts holding your Mac
   awake. The preview draws on your real desktop picture, since that's the thing

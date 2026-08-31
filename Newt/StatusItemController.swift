@@ -836,7 +836,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let canvas = canvasSize(for: look.backdrop, base: base.size)
         // A round backdrop's edge falls short of the canvas corner a badge would
         // otherwise sit in, so pull it back in.
-        let round = look.backdrop == .disc || look.backdrop == .circle
+        let round = look.backdrop == .circle
         let inset = round ? canvas.height * 0.1 : 0
         let image = NSImage(size: canvas, flipped: false) { rect in
             drawIcon(base, symbol: symbol, in: rect, look: look)
@@ -860,7 +860,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         case .none:            return base
         case .outline:         return NSSize(width: base.width + 3, height: base.height + 3)
         case .glow:            return NSSize(width: base.width + 5, height: base.height + 5)
-        case .disc, .circle:
+        case .circle:
             let d = max(base.width, base.height) + 2
             return NSSize(width: d, height: d)
         }
@@ -911,10 +911,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             return
         }
 
-        let inset: CGFloat = look.backdrop == .disc ? 5 : 0
         let h = base.size.height
         let ratio = base.size.width / h
-        let scale = min((rect.width - inset) / (h * ratio), (rect.height - inset) / h)
+        let scale = min(rect.width / (h * ratio), rect.height / h)
         let glyph = NSRect(x: rect.midX - h * ratio * scale / 2,
                            y: rect.midY - h * scale / 2,
                            width: h * ratio * scale, height: h * scale)
@@ -942,11 +941,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             let lit = tinted(base, glyphColor)
             for _ in 0 ..< 3 { lit.draw(in: glyph) }
             NSGraphicsContext.restoreGraphicsState()
-        case .disc:
-            backColor.setFill()
-            let d = min(rect.width, rect.height)
-            NSBezierPath(ovalIn: NSRect(x: rect.midX - d / 2, y: rect.midY - d / 2,
-                                        width: d, height: d)).fill()
         }
         tinted(base, glyphColor).draw(in: glyph)
     }
