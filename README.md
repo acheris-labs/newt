@@ -86,7 +86,7 @@ Click the menu bar icon.
 
 ## Settings
 
-**Settings…** in the menu (or ⌘,) opens a window with six tabs, listed here in
+**Settings…** in the menu (or ⌘,) opens a window with seven tabs, listed here in
 the order they appear.
 
 **General**
@@ -119,6 +119,17 @@ limits that behaviour to a time of day (say 09:00–23:00 — outside it the scr
 may sleep while everything else stays awake) and **Pause on battery** lets the
 display sleep whenever you're unplugged.
 
+**Icon** — how the menu bar lizard looks. macOS lets your wallpaper show
+through the menu bar, and a pale one can swallow a plain lizard, so you can put
+something solid behind it: an **outline** traced around it, a soft **glow**, a
+filled **disc**, or a **circle**. Newt keeps two separate looks — one for when
+it's idle and one for while it's holding your Mac awake — each with its own
+backdrop and its own two colours, so a glance at the menu bar tells you which
+it is. Everything defaults to *None* and automatic colours, which is exactly how
+Newt has always looked; *Use Automatic Colours* puts the colours back. The
+preview sits on your actual desktop picture, so you can see whether a choice
+survives your own wallpaper.
+
 **Schedule** — *Follow this schedule* plus the weekly grid. See
 [Setting a schedule](#setting-a-schedule).
 
@@ -131,10 +142,7 @@ they can hold your Mac awake while they work. Claude Code is supported today;
 others are listed greyed out until they are. See
 [below](#keeping-the-mac-awake-while-an-ai-agent-works).
 
-**Notifications** — *Notify when keep-awake expires*, plus **Fill when awake**,
-a colour for the lizard itself while Newt is holding your Mac awake (left the
-menu bar's own colour by default; the idle lizard is never tinted, so you can
-always tell the two apart). Then the indicator dot:
+**Notifications** — *Notify when keep-awake expires*, plus the indicator dot:
 whether to show it, how big it is, whether to outline it, whether it spins while
 both kinds of claim are holding, and a colour for each. The outline is what
 keeps the dot readable when a bright wallpaper shows through the menu bar, so

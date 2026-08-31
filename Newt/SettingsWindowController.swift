@@ -61,7 +61,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                                    target: nil, action: nil)
     private let sizeSlider = NSSlider(value: 0.46, minValue: 0.30, maxValue: 0.70,
                                       target: nil, action: nil)
+    // Icon — idle and awake are the same three controls twice over.
+    private let idleBackdropPopup = NSPopUpButton()
+    private let awakeBackdropPopup = NSPopUpButton()
+    private let idleBackdropWell = NSColorWell()
+    private let awakeBackdropWell = NSColorWell()
+    private let idleIconWell = NSColorWell()
     private let awakeIconWell = NSColorWell()
+    private let iconPreview = NSImageView()
+    private let resetIconColorsButton = NSButton(title: "Use Automatic Colours",
+                                                 target: nil, action: nil)
     private let scheduledWell = NSColorWell()
     private let dynamicWell = NSColorWell()
     private let resetColorsButton = NSButton(title: "Use Default Colours",
@@ -95,6 +104,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let tabs = NSTabView(frame: content.bounds.insetBy(dx: 12, dy: 12))
         tabs.addTabViewItem(tab("General", generalView()))
         tabs.addTabViewItem(tab("Wake Modes", wakeModesView()))
+        tabs.addTabViewItem(tab("Icon", iconView()))
         tabs.addTabViewItem(tab("Schedule", scheduleView()))
         tabs.addTabViewItem(tab("Left Click", leftClickView()))
         tabs.addTabViewItem(tab("Integrations", integrationsView()))
@@ -192,13 +202,27 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         spinBox.isEnabled = dotOn
         scheduledWell.isEnabled = dotOn
         dynamicWell.isEnabled = dotOn
-        resetColorsButton.isEnabled = !sleep.badgeColorsAreDefault
+        resetColorsButton.isEnabled = dotOn && !sleep.badgeColorsAreDefault
+        resetIconColorsButton.isEnabled = !sleep.iconColorsAreDefault
+        idleBackdropPopup.selectItem(at: IconBackdrop.allCases.firstIndex(
+            of: sleep.idleBackdrop) ?? 0)
+        awakeBackdropPopup.selectItem(at: IconBackdrop.allCases.firstIndex(
+            of: sleep.awakeBackdrop) ?? 0)
+        // A backdrop colour is only meaningful once there is a backdrop.
+        idleBackdropWell.isEnabled = sleep.idleBackdrop != .none
+        awakeBackdropWell.isEnabled = sleep.awakeBackdrop != .none
         // Don't fight the colour panel while it's open on this well.
-        if !awakeIconWell.isActive {
-            awakeIconWell.color = sleep.awakeIconColor ?? .labelColor
+        if !idleIconWell.isActive { idleIconWell.color = sleep.idleIconColor ?? .labelColor }
+        if !awakeIconWell.isActive { awakeIconWell.color = sleep.awakeIconColor ?? .labelColor }
+        if !idleBackdropWell.isActive {
+            idleBackdropWell.color = sleep.idleBackdropColor ?? .textBackgroundColor
+        }
+        if !awakeBackdropWell.isActive {
+            awakeBackdropWell.color = sleep.awakeBackdropColor ?? .textBackgroundColor
         }
         if !scheduledWell.isActive { scheduledWell.color = sleep.badgeStyle.scheduled }
         if !dynamicWell.isActive { dynamicWell.color = sleep.badgeStyle.dynamic }
+        refreshIconPreview()
         if sizeSlider.doubleValue != sleep.badgeSizeScale {
             sizeSlider.doubleValue = sleep.badgeSizeScale
         }
@@ -490,29 +514,174 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         refresh()
     }
 
+    // MARK: - Icon
+
+    /// Two states, three controls each, laid out as columns so an idle setting
+    /// and its awake counterpart sit side by side.
+    private func iconView() -> NSView {
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 420))
+        let idleX = 190.0, awakeX = 360.0
+
+        for (title, x) in [("Idle", idleX), ("While awake", awakeX)] {
+            let header = NSTextField(labelWithString: title)
+            header.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
+            header.frame = NSRect(x: x, y: 380, width: 160, height: 18)
+            view.addSubview(header)
+        }
+
+        func rowLabel(_ text: String, y: CGFloat) {
+            let label = NSTextField(labelWithString: text)
+            label.frame = NSRect(x: 20, y: y, width: 165, height: 18)
+            view.addSubview(label)
+        }
+
+        rowLabel("Backdrop", y: 350)
+        for (popup, x) in [(idleBackdropPopup, idleX), (awakeBackdropPopup, awakeX)] {
+            popup.removeAllItems()
+            popup.addItems(withTitles: IconBackdrop.allCases.map(\.menuTitle))
+            popup.frame = NSRect(x: x, y: 344, width: 150, height: 25)
+            popup.target = self
+            popup.action = #selector(backdropChanged(_:))
+            view.addSubview(popup)
+        }
+
+        // A colour well can't express "unset", so without an explicit Automatic
+        // there is no way back to the adaptive default once you've picked one —
+        // and the light/dark behaviour would be lost for good.
+        func colorRow(_ title: String, y: CGFloat, wells: [(NSColorWell, CGFloat)]) {
+            rowLabel(title, y: y + 4)
+            for (well, x) in wells {
+                well.frame = NSRect(x: x, y: y, width: 44, height: 24)
+                well.target = self
+                well.action = #selector(colorChanged(_:))
+                view.addSubview(well)
+                let auto = NSButton(title: "Automatic", target: self,
+                                    action: #selector(resetOneColor(_:)))
+                auto.bezelStyle = .rounded
+                auto.controlSize = .small
+                auto.font = .systemFont(ofSize: 11)
+                auto.frame = NSRect(x: x + 50, y: y + 1, width: 84, height: 22)
+                auto.identifier = well.identifier
+                view.addSubview(auto)
+            }
+        }
+
+        idleBackdropWell.identifier = .init("idleBackdrop")
+        awakeBackdropWell.identifier = .init("awakeBackdrop")
+        idleIconWell.identifier = .init("idleGlyph")
+        awakeIconWell.identifier = .init("awakeGlyph")
+        colorRow("Backdrop colour", y: 306,
+                 wells: [(idleBackdropWell, idleX), (awakeBackdropWell, awakeX)])
+        colorRow("Lizard colour", y: 272,
+                 wells: [(idleIconWell, idleX), (awakeIconWell, awakeX)])
+
+        // Drawn over the real desktop picture: the whole point of a backdrop is
+        // whether the icon survives what is behind the menu bar, and a swatch on
+        // this window's own grey can't show that.
+        iconPreview.frame = NSRect(x: 20, y: 176, width: 520, height: 64)
+        iconPreview.imageScaling = .scaleNone
+        iconPreview.wantsLayer = true
+        iconPreview.layer?.cornerRadius = 8
+        iconPreview.layer?.masksToBounds = true
+        view.addSubview(iconPreview)
+
+        resetIconColorsButton.frame = NSRect(x: 20, y: 138, width: 190, height: 28)
+        resetIconColorsButton.bezelStyle = .rounded
+        resetIconColorsButton.target = self
+        resetIconColorsButton.action = #selector(resetIconColors)
+        view.addSubview(resetIconColorsButton)
+
+        addHint("A transparent menu bar lets the wallpaper through, and a pale one can "
+                + "swallow the lizard. A backdrop puts something solid behind it. Giving "
+                + "the two states different backdrops or colours also makes it obvious at "
+                + "a glance whether Newt is holding your Mac awake.",
+                to: view, top: 128)
+        return view
+    }
+
+    @objc private func backdropChanged(_ sender: NSPopUpButton) {
+        let choice = IconBackdrop.allCases[max(0, sender.indexOfSelectedItem)]
+        if sender === idleBackdropPopup { sleep.idleBackdrop = choice }
+        else { sleep.awakeBackdrop = choice }
+        refresh()
+    }
+
+    @objc private func resetOneColor(_ sender: NSButton) {
+        switch sender.identifier?.rawValue {
+        case "idleBackdrop":  sleep.idleBackdropColor = nil
+        case "awakeBackdrop": sleep.awakeBackdropColor = nil
+        case "idleGlyph":     sleep.idleIconColor = nil
+        default:              sleep.awakeIconColor = nil
+        }
+        refresh()
+    }
+
+    /// The three states worth judging, over the desktop picture.
+    private func refreshIconPreview() {
+        let box = iconPreview.bounds
+        let image = NSImage(size: box.size, flipped: false) { rect in
+            if let wallpaper = Self.desktopPicture {
+                // Anchor the top: the menu bar sits over the top of the picture,
+                // so that is the part the icon actually has to survive.
+                let scale = max(rect.width / wallpaper.size.width,
+                                rect.height / wallpaper.size.height)
+                let size = NSSize(width: wallpaper.size.width * scale,
+                                  height: wallpaper.size.height * scale)
+                wallpaper.draw(in: NSRect(x: rect.midX - size.width / 2,
+                                          y: rect.maxY - size.height,
+                                          width: size.width, height: size.height))
+            } else {
+                NSColor.windowBackgroundColor.setFill()
+                rect.fill()
+            }
+            let states: [(Bool, StatusItemController.ClaimBadge?)] =
+                [(false, nil), (true, nil), (true, .scheduled), (true, .both)]
+            let labels = ["idle", "awake", "+ claim", "+ both"]
+            let step = rect.width / Double(states.count)
+            for (i, state) in states.enumerated() {
+                let mid = step * (Double(i) + 0.5)
+                if let icon = StatusItemController.statusImage(
+                    active: state.0, badge: state.1, suppressed: false,
+                    style: self.sleep.badgeStyle) {
+                    let h = 22.0, ratio = icon.size.width / icon.size.height
+                    icon.draw(in: NSRect(x: mid - h * ratio / 2, y: rect.midY - 3,
+                                         width: h * ratio, height: h))
+                }
+                let caption = NSAttributedString(string: labels[i], attributes: [
+                    .font: NSFont.systemFont(ofSize: 9),
+                    .foregroundColor: NSColor.white])
+                // The captions sit on the wallpaper too, and would be just as
+                // unreadable as the icon this panel exists to demonstrate.
+                let size = caption.size()
+                let pill = NSRect(x: mid - size.width / 2 - 5, y: rect.minY + 4,
+                                  width: size.width + 10, height: size.height + 2)
+                NSColor(white: 0, alpha: 0.55).setFill()
+                NSBezierPath(roundedRect: pill, xRadius: 5, yRadius: 5).fill()
+                caption.draw(at: NSPoint(x: mid - size.width / 2, y: rect.minY + 5))
+            }
+            return true
+        }
+        image.isTemplate = false
+        iconPreview.image = image
+    }
+
+    /// The desktop picture, read once. A dynamic or Photos-managed wallpaper can
+    /// fail to load, in which case the preview just falls back to a plain panel.
+    private static let desktopPicture: NSImage? = {
+        guard let screen = NSScreen.main,
+              let url = NSWorkspace.shared.desktopImageURL(for: screen) else { return nil }
+        return NSImage(contentsOf: url)
+    }()
+
     // MARK: - Notifications
 
     private func notificationsView() -> NSView {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 400))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 326))
         expiryBox.target = self
         expiryBox.action = #selector(expiryToggled)
-        expiryBox.frame = NSRect(x: 20, y: 348, width: 480, height: 20)
+        expiryBox.frame = NSRect(x: 20, y: 274, width: 480, height: 20)
         view.addSubview(expiryBox)
 
-        let iconHeader = NSTextField(labelWithString: "Menu bar icon")
-        iconHeader.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
-        iconHeader.frame = NSRect(x: 20, y: 300, width: 300, height: 18)
-        view.addSubview(iconHeader)
-
-        // Not part of the indicator dot, and so not switched off with it — the
-        // lizard is there whether or not the dot is.
-        let awakeLabel = NSTextField(labelWithString: "Fill when awake")
-        awakeLabel.frame = NSRect(x: 40, y: 276, width: 140, height: 18)
-        view.addSubview(awakeLabel)
-        awakeIconWell.frame = NSRect(x: 186, y: 272, width: 44, height: 24)
-        awakeIconWell.target = self
-        awakeIconWell.action = #selector(colorChanged(_:))
-        view.addSubview(awakeIconWell)
 
         let dotHeader = NSTextField(labelWithString: "Indicator dot")
         dotHeader.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
@@ -585,15 +754,23 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func colorChanged(_ sender: NSColorWell) {
         switch sender {
-        case awakeIconWell:  sleep.awakeIconColor = sender.color
-        case scheduledWell:  sleep.scheduledBadgeColor = sender.color
-        default:             sleep.dynamicBadgeColor = sender.color
+        case idleIconWell:      sleep.idleIconColor = sender.color
+        case awakeIconWell:     sleep.awakeIconColor = sender.color
+        case idleBackdropWell:  sleep.idleBackdropColor = sender.color
+        case awakeBackdropWell: sleep.awakeBackdropColor = sender.color
+        case scheduledWell:     sleep.scheduledBadgeColor = sender.color
+        default:                sleep.dynamicBadgeColor = sender.color
         }
         refresh()
     }
 
     @objc private func resetColors() {
         sleep.resetBadgeColors()
+        refresh()
+    }
+
+    @objc private func resetIconColors() {
+        sleep.resetIconColors()
         refresh()
     }
 

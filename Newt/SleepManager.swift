@@ -299,6 +299,53 @@ final class SleepManager {
         }
     }
 
+    // MARK: - Menu bar icon
+    //
+    // Idle and awake are two complete, independent looks: each picks its own
+    // backdrop and its own two colours. A transparent menu bar shows the
+    // wallpaper through, and the lizard is a thin organic shape that a bright
+    // one swallows, so the backdrop is what makes it legible at all.
+
+    var idleBackdrop: IconBackdrop = .none {
+        didSet {
+            guard idleBackdrop != oldValue else { return }
+            UserDefaults.standard.set(idleBackdrop.rawValue, forKey: "IconBackdropIdle")
+            onChange?()
+        }
+    }
+
+    var awakeBackdrop: IconBackdrop = .none {
+        didSet {
+            guard awakeBackdrop != oldValue else { return }
+            UserDefaults.standard.set(awakeBackdrop.rawValue, forKey: "IconBackdropAwake")
+            onChange?()
+        }
+    }
+
+    var idleBackdropColor: NSColor? {
+        didSet {
+            guard idleBackdropColor != oldValue else { return }
+            Self.store(idleBackdropColor, forKey: "IconColorBackdropIdle")
+            onChange?()
+        }
+    }
+
+    var awakeBackdropColor: NSColor? {
+        didSet {
+            guard awakeBackdropColor != oldValue else { return }
+            Self.store(awakeBackdropColor, forKey: "IconColorBackdropAwake")
+            onChange?()
+        }
+    }
+
+    var idleIconColor: NSColor? {
+        didSet {
+            guard idleIconColor != oldValue else { return }
+            Self.store(idleIconColor, forKey: "IconColorGlyphIdle")
+            onChange?()
+        }
+    }
+
     /// Colour to fill the lizard with while Newt is holding the Mac awake, or
     /// nil to leave it the menu bar's own text colour.
     var awakeIconColor: NSColor? {
@@ -315,17 +362,36 @@ final class SleepManager {
                    outline: badgeOutline,
                    scheduled: scheduledBadgeColor ?? .systemGreen,
                    dynamic: dynamicBadgeColor ?? .systemBlue,
-                   awakeFill: awakeIconColor)
+                   idle: IconLook(backdrop: idleBackdrop,
+                                  backdropColor: idleBackdropColor,
+                                  glyphColor: idleIconColor),
+                   awake: IconLook(backdrop: awakeBackdrop,
+                                   backdropColor: awakeBackdropColor,
+                                   glyphColor: awakeIconColor))
     }
 
-    /// True when the dots and the lizard are all on the stock colours.
+    /// True when both indicator dots are on the stock colours.
     var badgeColorsAreDefault: Bool {
-        scheduledBadgeColor == nil && dynamicBadgeColor == nil && awakeIconColor == nil
+        scheduledBadgeColor == nil && dynamicBadgeColor == nil
     }
 
     func resetBadgeColors() {
         scheduledBadgeColor = nil
         dynamicBadgeColor = nil
+    }
+
+    /// True when both icon looks are on their automatic colours. The backdrop
+    /// *shapes* aren't colours, so they're deliberately excluded: resetting
+    /// colours shouldn't silently undo a style choice.
+    var iconColorsAreDefault: Bool {
+        [idleBackdropColor, awakeBackdropColor,
+         idleIconColor, awakeIconColor].allSatisfy { $0 == nil }
+    }
+
+    func resetIconColors() {
+        idleBackdropColor = nil
+        awakeBackdropColor = nil
+        idleIconColor = nil
         awakeIconColor = nil
     }
 
@@ -462,7 +528,14 @@ final class SleepManager {
         badgeSpin = defaults.object(forKey: "BadgeSpin") as? Bool ?? true
         scheduledBadgeColor = Self.storedColor(forKey: "BadgeColorScheduled")
         dynamicBadgeColor = Self.storedColor(forKey: "BadgeColorDynamic")
+        idleIconColor = Self.storedColor(forKey: "IconColorGlyphIdle")
         awakeIconColor = Self.storedColor(forKey: "IconColorAwake")
+        idleBackdropColor = Self.storedColor(forKey: "IconColorBackdropIdle")
+        awakeBackdropColor = Self.storedColor(forKey: "IconColorBackdropAwake")
+        idleBackdrop = (defaults.string(forKey: "IconBackdropIdle")
+            .flatMap(IconBackdrop.init(rawValue:))) ?? .none
+        awakeBackdrop = (defaults.string(forKey: "IconBackdropAwake")
+            .flatMap(IconBackdrop.init(rawValue:))) ?? .none
         // Weekly schedule. Missing keys → the workweek default, switched off.
         scheduleEnabled = defaults.object(forKey: "ScheduleEnabled") as? Bool ?? false
         schedule = WeeklySchedule.load()
@@ -1185,6 +1258,35 @@ final class SleepManager {
 /// How the menu bar indicator dot is drawn. Colors are configurable because
 /// which ones stand out depends on the wallpaper behind the menu bar, which
 /// Newt can't see; the *meaning* of each is fixed.
+/// What sits behind the lizard so a transparent menu bar can't swallow it.
+enum IconBackdrop: String, CaseIterable {
+    case none, outline, glow, disc, circle
+
+    var menuTitle: String {
+        switch self {
+        case .none:    return "None"
+        case .outline: return "Outline"
+        case .glow:    return "Glow"
+        case .disc:    return "Disc"
+        case .circle:  return "Circle"
+        }
+    }
+}
+
+/// How the menu bar icon is drawn in one state. Newt keeps two of these — idle
+/// and awake — and they're independent, so the icon can change shape as well as
+/// colour when something starts holding the Mac awake.
+///
+/// A nil colour means "work it out": the glyph follows the menu bar's own text
+/// colour, and the backdrop takes whatever contrasts with the glyph. Storing the
+/// resolved colour instead would freeze it, and it would stop adapting when the
+/// menu bar flips between light and dark.
+struct IconLook {
+    var backdrop: IconBackdrop = .none
+    var backdropColor: NSColor?
+    var glyphColor: NSColor?
+}
+
 struct BadgeStyle {
     var scale: Double = 0.46
     var outline: Bool = true
@@ -1192,9 +1294,8 @@ struct BadgeStyle {
     var scheduled: NSColor = .systemGreen
     /// Dynamic claims, usually an AI agent mid-turn.
     var dynamic: NSColor = .systemBlue
-    /// Fills the lizard while Newt is holding the Mac awake. Nil leaves it the
-    /// menu bar's own text colour, which is what a template image would give.
-    var awakeFill: NSColor?
+    var idle = IconLook()
+    var awake = IconLook()
     /// Radians the split is turned through. Only the two-tone "both" dot uses
     /// it — a solid disc looks identical however far you rotate it.
     var rotation: Double = 0
