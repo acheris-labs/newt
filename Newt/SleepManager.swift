@@ -1247,9 +1247,6 @@ final class SleepManager {
     }
 }
 
-/// How the menu bar indicator dot is drawn. Colors are configurable because
-/// which ones stand out depends on the wallpaper behind the menu bar, which
-/// Newt can't see; the *meaning* of each is fixed.
 /// What sits behind the lizard so a transparent menu bar can't swallow it.
 enum IconBackdrop: String, CaseIterable {
     case none, outline, glow, circle
@@ -1278,6 +1275,9 @@ struct IconLook {
     var glyphColor: NSColor?
 }
 
+/// How the menu bar indicator dot is drawn. Colors are configurable because
+/// which ones stand out depends on the wallpaper behind the menu bar, which
+/// Newt can't see; the *meaning* of each is fixed.
 struct BadgeStyle {
     var scale: Double = 0.46
     var outline: Bool = true

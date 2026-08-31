@@ -69,6 +69,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let idleIconWell = NSColorWell()
     private let awakeIconWell = NSColorWell()
     private let iconPreview = NSImageView()
+    private var automaticButtons: [String: NSButton] = [:]
     private let scheduledWell = NSColorWell()
     private let dynamicWell = NSColorWell()
     private let resetColorsButton = NSButton(title: "Use Automatic Colours",
@@ -206,14 +207,18 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         // A backdrop colour is only meaningful once there is a backdrop.
         idleBackdropWell.isEnabled = sleep.idleBackdrop != .none
         awakeBackdropWell.isEnabled = sleep.awakeBackdrop != .none
+        automaticButtons["idleBackdrop"]?.isEnabled = idleBackdropWell.isEnabled
+        automaticButtons["awakeBackdrop"]?.isEnabled = awakeBackdropWell.isEnabled
         // Don't fight the colour panel while it's open on this well.
         if !idleIconWell.isActive { idleIconWell.color = sleep.idleIconColor ?? .labelColor }
         if !awakeIconWell.isActive { awakeIconWell.color = sleep.awakeIconColor ?? .labelColor }
         if !idleBackdropWell.isActive {
-            idleBackdropWell.color = sleep.idleBackdropColor ?? .textBackgroundColor
+            idleBackdropWell.color = sleep.idleBackdropColor
+                ?? StatusItemController.contrasting(to: sleep.idleIconColor ?? .labelColor)
         }
         if !awakeBackdropWell.isActive {
-            awakeBackdropWell.color = sleep.awakeBackdropColor ?? .textBackgroundColor
+            awakeBackdropWell.color = sleep.awakeBackdropColor
+                ?? StatusItemController.contrasting(to: sleep.awakeIconColor ?? .labelColor)
         }
         if !scheduledWell.isActive { scheduledWell.color = sleep.badgeStyle.scheduled }
         if !dynamicWell.isActive { dynamicWell.color = sleep.badgeStyle.dynamic }
@@ -221,7 +226,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         if sizeSlider.doubleValue != sleep.badgeSizeScale {
             sizeSlider.doubleValue = sleep.badgeSizeScale
         }
-        refreshIconPreview()
         updatePreviewSpin()
     }
 
@@ -562,6 +566,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             auto.font = .systemFont(ofSize: 11)
             auto.frame = NSRect(x: x + 50, y: y + 1, width: 84, height: 22)
             auto.identifier = .init(id)
+            automaticButtons[id] = auto
             view.addSubview(auto)
         }
 
@@ -734,8 +739,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         refresh()
     }
 
-    /// The three dot states side by side at menu bar size, drawn by the same
-    /// function the status item uses so the preview can't drift from reality.
     // MARK: - Shared bits
 
     /// Places a hint with its top edge at `top` and returns its bottom edge, so

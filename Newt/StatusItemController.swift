@@ -839,7 +839,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let round = look.backdrop == .circle
         let inset = round ? canvas.height * 0.1 : 0
         let image = NSImage(size: canvas, flipped: false) { rect in
-            drawIcon(base, symbol: symbol, in: rect, look: look)
+            drawIcon(base, in: rect, look: look)
             if suppressed {
                 drawCautionBadge(in: rect, basis: base.size.height, cornerInset: inset)
             } else if let badge {
@@ -869,7 +869,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// The backdrop a colour has to be to lift the glyph off the wallpaper: the
     /// opposite end of the scale. Resolved from the glyph at draw time, so it
     /// follows the menu bar between light and dark rather than freezing.
-    private static func contrasting(to color: NSColor) -> NSColor {
+    static func contrasting(to color: NSColor) -> NSColor {
         let rgb = color.usingColorSpace(.sRGB) ?? .white
         let luma = 0.299 * rgb.redComponent
                  + 0.587 * rgb.greenComponent
@@ -886,8 +886,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         }
     }
 
-    private static func drawIcon(_ base: NSImage, symbol: String,
-                                 in rect: NSRect, look: IconLook) {
+    /// Draws one `IconLook` into `rect`. `.circle` is deliberately state-neutral:
+    /// it always uses the filled symbol, because its outlined pair is a ring
+    /// rather than a disc and would let the wallpaper straight back through.
+    private static func drawIcon(_ base: NSImage, in rect: NSRect, look: IconLook) {
         let glyphColor = look.glyphColor ?? .labelColor
         let backColor = look.backdropColor ?? contrasting(to: glyphColor)
 
@@ -907,8 +909,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                 disc.draw(in: NSRect(x: rect.midX - side * ratio / 2,
                                      y: rect.midY - side / 2,
                                      width: side * ratio, height: side))
+                return
             }
-            return
+            // Falling through rather than returning: without the symbol this
+            // would draw nothing at all, leaving a blank gap in the menu bar.
         }
 
         let h = base.size.height
