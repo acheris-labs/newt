@@ -8,7 +8,7 @@ import Sparkle
 /// there is no OK or Apply, matching the menus and the schedule grid. The menu
 /// and this window show some of the same settings, so both are refreshed from
 /// the same place: `StatusItemController.refresh()`.
-final class SettingsWindowController: NSWindowController, NSWindowDelegate {
+final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTabViewDelegate {
     private let sleep: SleepManager
     private let login: LoginItemController
     private let updater: SPUUpdaterProviding
@@ -70,6 +70,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let awakeIconWell = NSColorWell()
     private let iconPreview = NSImageView()
     private var automaticButtons: [String: NSButton] = [:]
+    /// Held so the spin timer can tell whether its preview is on screen.
+    private var tabs: NSTabView!
     private let scheduledWell = NSColorWell()
     private let dynamicWell = NSColorWell()
     private let resetColorsButton = NSButton(title: "Use Automatic Colours",
@@ -100,6 +102,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         super.init(window: window)
 
         let tabs = NSTabView(frame: content.bounds.insetBy(dx: 12, dy: 12))
+        self.tabs = tabs
+        tabs.delegate = self
         tabs.addTabViewItem(tab("General", generalView()))
         tabs.addTabViewItem(tab("Wake Modes", wakeModesView()))
         tabs.addTabViewItem(tab("Icon", iconView()))
@@ -141,9 +145,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
-        if let tab, let tabs = window?.contentView?.subviews.compactMap({ $0 as? NSTabView }).first {
-            tabs.selectTabViewItem(withIdentifier: tab)
-        }
+        if let tab { tabs.selectTabViewItem(withIdentifier: tab) }
     }
 
     /// Pull state back from `SleepManager` — the menu carries some of the same
@@ -233,6 +235,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     /// show, so only that state animates.
     private func updatePreviewSpin() {
         let wanted = (window?.isVisible ?? false)
+            && (tabs?.selectedTabViewItem?.identifier as? String) == "Icon"
             && sleep.isNotificationEnabled(.badgeWhenEngaged)
             && sleep.badgeSpin
         guard wanted else {
@@ -251,6 +254,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         }
         RunLoop.main.add(timer, forMode: .common)
         previewSpinTimer = timer
+    }
+
+    func tabView(_ tabView: NSTabView, didSelect item: NSTabViewItem?) {
+        // The preview only animates while it's the tab on screen.
+        updatePreviewSpin()
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -645,16 +653,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func refreshIconPreview() {
         let box = iconPreview.bounds
         let image = NSImage(size: box.size, flipped: false) { rect in
-            if let wallpaper = Self.desktopPicture {
-                // Anchor the top: the menu bar sits over the top of the picture,
-                // so that is the part the icon actually has to survive.
-                let scale = max(rect.width / wallpaper.size.width,
-                                rect.height / wallpaper.size.height)
-                let size = NSSize(width: wallpaper.size.width * scale,
-                                  height: wallpaper.size.height * scale)
-                wallpaper.draw(in: NSRect(x: rect.midX - size.width / 2,
-                                          y: rect.maxY - size.height,
-                                          width: size.width, height: size.height))
+            if let backdrop = self.previewBackdrop(size: rect.size) {
+                backdrop.draw(in: rect)
             } else {
                 NSColor.windowBackgroundColor.setFill()
                 rect.fill()
@@ -702,6 +702,33 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         image.isTemplate = false
         iconPreview.image = image
     }
+
+    /// The desktop picture cropped to the preview, built once. A 6000×4000
+    /// wallpaper costs ~3 ms to rescale and the spin timer redraws 8×/s, so the
+    /// scaling is done here rather than per frame — the blit is ~0.1 ms.
+    ///
+    /// No invalidation, matching `desktopPicture`: both are read once, so
+    /// changing your wallpaper shows up the next time Newt starts.
+    private func previewBackdrop(size: NSSize) -> NSImage? {
+        if let cached = cachedBackdrop, cached.size == size { return cached }
+        guard let wallpaper = Self.desktopPicture else { return nil }
+        let image = NSImage(size: size, flipped: false) { rect in
+            // Anchor the top: the menu bar sits over the top of the picture, so
+            // that is the part the icon actually has to survive.
+            let scale = max(rect.width / wallpaper.size.width,
+                            rect.height / wallpaper.size.height)
+            let scaled = NSSize(width: wallpaper.size.width * scale,
+                                height: wallpaper.size.height * scale)
+            wallpaper.draw(in: NSRect(x: rect.midX - scaled.width / 2,
+                                      y: rect.maxY - scaled.height,
+                                      width: scaled.width, height: scaled.height))
+            return true
+        }
+        cachedBackdrop = image
+        return image
+    }
+
+    private var cachedBackdrop: NSImage?
 
     /// The desktop picture, read once. A dynamic or Photos-managed wallpaper can
     /// fail to load, in which case the preview just falls back to a plain panel.
