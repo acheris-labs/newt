@@ -924,11 +924,17 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         // to make readable.
         if look.backdrop == .circle {
             let side = min(rect.width, rect.height)
-            let config = NSImage.SymbolConfiguration(pointSize: side, weight: .regular)
-                .applying(.init(paletteColors: [glyphColor, backColor]))
-            if let disc = NSImage(systemSymbolName: "lizard.circle.fill",
+            var config = NSImage.SymbolConfiguration(pointSize: side, weight: .regular)
+            // The symbol's own artwork already has the lizard as a hole in the
+            // disc, so a flat tint *is* the cut-out. Palette fills that hole with
+            // its own colour, which is the solid one.
+            if !look.cutsOut {
+                config = config.applying(.init(paletteColors: [glyphColor, backColor]))
+            }
+            if var disc = NSImage(systemSymbolName: "lizard.circle.fill",
                                   accessibilityDescription: "Newt")?
                 .withSymbolConfiguration(config) {
+                if look.cutsOut { disc = tinted(disc, backColor) }
                 let ratio = disc.size.width / disc.size.height
                 disc.draw(in: NSRect(x: rect.midX - side * ratio / 2,
                                      y: rect.midY - side / 2,

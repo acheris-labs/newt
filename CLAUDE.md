@@ -103,8 +103,10 @@ badge, no chosen glyph colour, no backdrop. A nil colour in an `IconLook` means
 the menu bar's own appearance — which is why the automatic backdrop inverts
 between light and dark, and why it follows the *menu bar*, not the system
 setting (a dark wallpaper keeps the bar dark in Light Mode). `.circle` uses SF
-Symbols' two-layer `lizard.circle.fill` via `paletteColors`; a flat tint would
-colour the disc and knock the lizard out of it. A backdrop enlarges the canvas,
+Symbols' `lizard.circle.fill`, whose artwork is a disc with the lizard as a
+*hole*: `paletteColors` fills that hole to give a solid lizard, and a flat tint
+leaves it open, which is exactly what `IconLook.cutsOut` wants. `cutsOut` is
+gated on `.circle` because it's the only backdrop opaque enough to cut out of. A backdrop enlarges the canvas,
 so the claim and caution badges size themselves from the *glyph* height, not
 `rect.height`, or they'd inflate with it.
 
@@ -118,7 +120,7 @@ covered by three notification observers that just call `reconcile()`.
 
 ### UserDefaults keys (all in standard defaults)
 
-`BatteryThresholdPercent`, `WakeMode.<rawValue>` (one per case), `LeftClickAction`, `LastUsedSliderPosition`, `FixedClickSliderPosition`, `ScheduleEnabled`, `ScheduleBlocks` (JSON `Data`), `SuppressedUntil` (`Double`, absent = not suppressed), `BadgeSizeScale` (`Double`), `BadgeOutline` (`Bool`), `BadgeSpin` (`Bool`), `HideIconAfterPosition` (`Int`, **absent = the top stop, i.e. never hide**), `IconBackdropIdle` / `IconBackdropAwake` (`String`, an `IconBackdrop` rawValue, **absent = `.none`**), `BadgeColorScheduled` / `BadgeColorDynamic` / `IconColorGlyphIdle` / `IconColorAwake` / `IconColorBackdropIdle` / `IconColorBackdropAwake` (`[Double]` sRGB components; **absent means "use the system colour"**, which keeps the default dynamic across light/dark — don't write the system colour's components into them). All have sensible defaults for fresh installs — never add a migration that breaks an upgrade.
+`BatteryThresholdPercent`, `WakeMode.<rawValue>` (one per case), `LeftClickAction`, `LastUsedSliderPosition`, `FixedClickSliderPosition`, `ScheduleEnabled`, `ScheduleBlocks` (JSON `Data`), `SuppressedUntil` (`Double`, absent = not suppressed), `BadgeSizeScale` (`Double`), `BadgeOutline` (`Bool`), `BadgeSpin` (`Bool`), `HideIconAfterPosition` (`Int`, **absent = the top stop, i.e. never hide**), `IconBackdropIdle` / `IconBackdropAwake` (`String`, an `IconBackdrop` rawValue, **absent = `.none`**), `IconCutoutIdle` / `IconCutoutAwake` (`Bool`), `BadgeColorScheduled` / `BadgeColorDynamic` / `IconColorGlyphIdle` / `IconColorAwake` / `IconColorBackdropIdle` / `IconColorBackdropAwake` (`[Double]` sRGB components; **absent means "use the system colour"**, which keeps the default dynamic across light/dark — don't write the system colour's components into them). All have sensible defaults for fresh installs — never add a migration that breaks an upgrade.
 
 AppKit also persists the status item's visibility itself, as `NSStatusItem
 VisibleCC NewtStatusItem`. Newt never writes that key — `configureStatusItem()`

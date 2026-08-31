@@ -338,6 +338,22 @@ final class SleepManager {
         }
     }
 
+    var idleCutout = false {
+        didSet {
+            guard idleCutout != oldValue else { return }
+            UserDefaults.standard.set(idleCutout, forKey: "IconCutoutIdle")
+            onChange?()
+        }
+    }
+
+    var awakeCutout = false {
+        didSet {
+            guard awakeCutout != oldValue else { return }
+            UserDefaults.standard.set(awakeCutout, forKey: "IconCutoutAwake")
+            onChange?()
+        }
+    }
+
     var idleIconColor: NSColor? {
         didSet {
             guard idleIconColor != oldValue else { return }
@@ -364,10 +380,12 @@ final class SleepManager {
                    dynamic: dynamicBadgeColor ?? .systemBlue,
                    idle: IconLook(backdrop: idleBackdrop,
                                   backdropColor: idleBackdropColor,
-                                  glyphColor: idleIconColor),
+                                  glyphColor: idleIconColor,
+                                  cutout: idleCutout),
                    awake: IconLook(backdrop: awakeBackdrop,
                                    backdropColor: awakeBackdropColor,
-                                   glyphColor: awakeIconColor))
+                                   glyphColor: awakeIconColor,
+                                   cutout: awakeCutout))
     }
 
     /// True when every colour — both icon looks and both dots — is automatic.
@@ -528,6 +546,8 @@ final class SleepManager {
             .flatMap(IconBackdrop.init(rawValue:))) ?? .none
         awakeBackdrop = (defaults.string(forKey: "IconBackdropAwake")
             .flatMap(IconBackdrop.init(rawValue:))) ?? .none
+        idleCutout = defaults.bool(forKey: "IconCutoutIdle")
+        awakeCutout = defaults.bool(forKey: "IconCutoutAwake")
         // Weekly schedule. Missing keys → the workweek default, switched off.
         scheduleEnabled = defaults.object(forKey: "ScheduleEnabled") as? Bool ?? false
         schedule = WeeklySchedule.load()
@@ -1273,6 +1293,12 @@ struct IconLook {
     var backdrop: IconBackdrop = .none
     var backdropColor: NSColor?
     var glyphColor: NSColor?
+    /// Punch the lizard out of the backdrop rather than filling it, so the
+    /// wallpaper shows through the glyph. Only a backdrop that is actually
+    /// opaque has anything to cut it out of, so this applies to `.circle` alone.
+    var cutout = false
+
+    var cutsOut: Bool { cutout && backdrop == .circle }
 }
 
 /// How the menu bar indicator dot is drawn. Colors are configurable because

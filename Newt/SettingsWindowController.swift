@@ -68,6 +68,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let awakeBackdropWell = NSColorWell()
     private let idleIconWell = NSColorWell()
     private let awakeIconWell = NSColorWell()
+    private let idleCutoutBox = NSButton(checkboxWithTitle: "Cut out", target: nil, action: nil)
+    private let awakeCutoutBox = NSButton(checkboxWithTitle: "Cut out", target: nil, action: nil)
     private let iconPreview = NSImageView()
     private var automaticButtons: [String: NSButton] = [:]
     /// Held so the spin timer can tell whether its preview is on screen.
@@ -82,7 +84,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private var previewSpinTimer: Timer?
     private var previewAngle: Double = 0
 
-    private static let contentSize = NSSize(width: 600, height: 530)
+    private static let contentSize = NSSize(width: 600, height: 560)
 
     init(sleep: SleepManager, login: LoginItemController, updater: SPUUpdaterProviding) {
         self.sleep = sleep
@@ -211,6 +213,17 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         awakeBackdropWell.isEnabled = sleep.awakeBackdrop != .none
         automaticButtons["idleBackdrop"]?.isEnabled = idleBackdropWell.isEnabled
         automaticButtons["awakeBackdrop"]?.isEnabled = awakeBackdropWell.isEnabled
+        // Only an opaque backdrop has anything to cut the lizard out of.
+        idleCutoutBox.state = sleep.idleCutout ? .on : .off
+        awakeCutoutBox.state = sleep.awakeCutout ? .on : .off
+        idleCutoutBox.isEnabled = sleep.idleBackdrop == .circle
+        awakeCutoutBox.isEnabled = sleep.awakeBackdrop == .circle
+        for (id, hidden) in [("idleGlyph", sleep.badgeStyle.idle.cutsOut),
+                             ("awakeGlyph", sleep.badgeStyle.awake.cutsOut)] {
+            automaticButtons[id]?.isHidden = hidden
+        }
+        idleIconWell.isHidden = sleep.badgeStyle.idle.cutsOut
+        awakeIconWell.isHidden = sleep.badgeStyle.awake.cutsOut
         // Don't fight the colour panel while it's open on this well.
         if !idleIconWell.isActive { idleIconWell.color = sleep.idleIconColor ?? .labelColor }
         if !awakeIconWell.isActive { awakeIconWell.color = sleep.awakeIconColor ?? .labelColor }
@@ -532,13 +545,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     /// states at the top, the claim dot below, and a preview of the lot over
     /// the real desktop picture.
     private func iconView() -> NSView {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 460))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 490))
         let idleX = 190.0, awakeX = 360.0
 
         for (title, x) in [("Idle", idleX), ("While awake", awakeX)] {
             let header = NSTextField(labelWithString: title)
             header.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
-            header.frame = NSRect(x: x, y: 420, width: 160, height: 18)
+            header.frame = NSRect(x: x, y: 450, width: 160, height: 18)
             view.addSubview(header)
         }
 
@@ -548,11 +561,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             view.addSubview(field)
         }
 
-        label("Backdrop", x: 20, y: 388)
+        label("Backdrop", x: 20, y: 418)
         for (popup, x) in [(idleBackdropPopup, idleX), (awakeBackdropPopup, awakeX)] {
             popup.removeAllItems()
             popup.addItems(withTitles: IconBackdrop.allCases.map(\.menuTitle))
-            popup.frame = NSRect(x: x, y: 384, width: 150, height: 25)
+            popup.frame = NSRect(x: x, y: 414, width: 150, height: 25)
             popup.target = self
             popup.action = #selector(backdropChanged(_:))
             view.addSubview(popup)
@@ -578,12 +591,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             view.addSubview(auto)
         }
 
-        label("Backdrop colour", x: 20, y: 354)
-        well(idleBackdropWell, id: "idleBackdrop", x: idleX, y: 350)
-        well(awakeBackdropWell, id: "awakeBackdrop", x: awakeX, y: 350)
-        label("Lizard colour", x: 20, y: 320)
-        well(idleIconWell, id: "idleGlyph", x: idleX, y: 316)
-        well(awakeIconWell, id: "awakeGlyph", x: awakeX, y: 316)
+        label("Backdrop colour", x: 20, y: 384)
+        well(idleBackdropWell, id: "idleBackdrop", x: idleX, y: 380)
+        well(awakeBackdropWell, id: "awakeBackdrop", x: awakeX, y: 380)
+        label("Lizard colour", x: 20, y: 350)
+        well(idleIconWell, id: "idleGlyph", x: idleX, y: 346)
+        well(awakeIconWell, id: "awakeGlyph", x: awakeX, y: 346)
+
+        // Cut out replaces the lizard's colour rather than joining it: the
+        // wallpaper is what shows through, so there is nothing left to pick.
+        for (box, x) in [(idleCutoutBox, idleX), (awakeCutoutBox, awakeX)] {
+            box.target = self
+            box.action = #selector(cutoutChanged(_:))
+            box.frame = NSRect(x: x, y: 318, width: 160, height: 20)
+            view.addSubview(box)
+        }
 
         let dotHeader = NSTextField(labelWithString: "Indicator dot")
         dotHeader.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
@@ -628,6 +650,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         resetColorsButton.action = #selector(resetColors)
         view.addSubview(resetColorsButton)
         return view
+    }
+
+    @objc private func cutoutChanged(_ sender: NSButton) {
+        if sender === idleCutoutBox { sleep.idleCutout = sender.state == .on }
+        else { sleep.awakeCutout = sender.state == .on }
+        refresh()
     }
 
     @objc private func backdropChanged(_ sender: NSPopUpButton) {

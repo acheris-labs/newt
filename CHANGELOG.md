@@ -11,6 +11,14 @@ auto-update prompt.
 
 ## [Unreleased]
 
+### Added
+
+- **Cut out** (*Settings ▸ Icon*), for a circle backdrop: the lizard becomes
+  see-through instead of coloured, so your wallpaper shows through it. Worth it
+  when the circle is pale — a light lizard on a light circle otherwise
+  disappears. Ticking it hides the lizard colour, since there's no longer a
+  colour to pick.
+
 ## [0.8.0] - 2026-08-31
 
 ### Added

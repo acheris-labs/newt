@@ -129,6 +129,11 @@ it's idle and one for while it's holding your Mac awake — each with its own
 backdrop and its own two colours, so a glance at the menu bar tells you which
 it is.
 
+With a **circle** backdrop you can also tick **Cut out**, which makes the lizard
+see-through rather than coloured, so your wallpaper shows through it. That's the
+one to reach for when the circle is a pale colour, where a light lizard on a
+light circle would otherwise vanish.
+
 The same tab carries the **indicator dot**: whether to show it, how big it is,
 whether to outline it, whether it spins while both kinds of claim are holding,
 and a colour for each. The dot's colour says *what* is holding your Mac awake,
