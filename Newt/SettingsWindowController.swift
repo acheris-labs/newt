@@ -673,8 +673,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 let mid = step * (Double(i) + 0.5)
                 var style = self.sleep.badgeStyle
                 if state.1 == .both { style.rotation = self.previewAngle }
-                if let icon = StatusItemController.statusImage(
+                if var icon = StatusItemController.statusImage(
                     active: state.0, badge: state.1, suppressed: false, style: style) {
+                    // A template image is black artwork plus an alpha mask — the
+                    // status item's *button* applies the menu bar tint, and there
+                    // is no button here. Drawn as-is it would come out black.
+                    if icon.isTemplate {
+                        icon = StatusItemController.tinted(icon, .labelColor)
+                    }
                     let h = 22.0, ratio = icon.size.width / icon.size.height
                     icon.draw(in: NSRect(x: mid - h * ratio / 2, y: rect.midY - 3,
                                          width: h * ratio, height: h))

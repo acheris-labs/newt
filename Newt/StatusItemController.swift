@@ -877,7 +877,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         return luma > 0.5 ? NSColor(white: 0, alpha: 0.85) : NSColor(white: 1, alpha: 0.9)
     }
 
-    private static func tinted(_ image: NSImage, _ color: NSColor) -> NSImage {
+    static func tinted(_ image: NSImage, _ color: NSColor) -> NSImage {
         NSImage(size: image.size, flipped: false) { rect in
             image.draw(in: rect)
             color.set()
