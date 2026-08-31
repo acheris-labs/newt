@@ -106,9 +106,9 @@ setting (a dark wallpaper keeps the bar dark in Light Mode). `.circle` uses SF
 Symbols' `lizard.circle.fill`, whose artwork is a disc with the lizard as a
 *hole*: `paletteColors` fills that hole to give a solid lizard, and a flat tint
 leaves it open, which is exactly what `IconLook.cutsOut` wants. `cutsOut` is
-gated on `.circle` because it's the only backdrop opaque enough to cut out of. A backdrop enlarges the canvas,
-so the claim and caution badges size themselves from the *glyph* height, not
-`rect.height`, or they'd inflate with it.
+gated on `.circle` because it's the only backdrop opaque enough to cut out of.
+A backdrop enlarges the canvas, so the claim and caution badges size themselves
+from the *glyph* height, not `rect.height`, or they'd inflate with it.
 
 The schedule's `boundaryTimer` is a one-shot armed at the next edge, not a
 poll. Wall-clock jumps it can't see — sleep/wake, clock set, time zone — are
