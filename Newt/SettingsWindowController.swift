@@ -591,11 +591,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         resetIconColorsButton.action = #selector(resetIconColors)
         view.addSubview(resetIconColorsButton)
 
-        addHint("A transparent menu bar lets the wallpaper through, and a pale one can "
-                + "swallow the lizard. A backdrop puts something solid behind it. Giving "
-                + "the two states different backdrops or colours also makes it obvious at "
-                + "a glance whether Newt is holding your Mac awake.",
-                to: view, top: 128)
         return view
     }
 
