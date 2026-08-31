@@ -86,7 +86,7 @@ Click the menu bar icon.
 
 ## Settings
 
-**Settings…** in the menu (or ⌘,) opens a window with seven tabs, listed here in
+**Settings…** in the menu (or ⌘,) opens a window with six tabs, listed here in
 the order they appear.
 
 **General**
@@ -96,6 +96,8 @@ the order they appear.
   your Mac awake when it last quit, it picks up where it left off; the duration
   restarts from full.
 - **Check for updates automatically** — Newt updates itself.
+- **Notify when keep-awake expires** — a notification when a timed session runs
+  out, so a Mac that's about to start sleeping again doesn't surprise you.
 - **Low battery cutoff** (0–30%) — while Newt is holding your Mac awake *on
   battery*, if the charge falls to or below this floor Newt lets go so macOS can
   sleep before the battery runs flat, then picks up again once you plug in. 0
@@ -125,10 +127,19 @@ something solid behind it: an **outline** traced around it, a soft **glow**, a
 filled **disc**, or a **circle**. Newt keeps two separate looks — one for when
 it's idle and one for while it's holding your Mac awake — each with its own
 backdrop and its own two colours, so a glance at the menu bar tells you which
-it is. Everything defaults to *None* and automatic colours, which is exactly how
-Newt has always looked; *Use Automatic Colours* puts the colours back. The
-preview sits on your actual desktop picture, so you can see whether a choice
-survives your own wallpaper.
+it is.
+
+The same tab carries the **indicator dot**: whether to show it, how big it is,
+whether to outline it, whether it spins while both kinds of claim are holding,
+and a colour for each. The dot's colour says *what* is holding your Mac awake,
+so the two wells are labelled by meaning. The outline is what keeps the dot
+readable when a bright wallpaper shows through, so leave it on unless you have
+a reason not to.
+
+Everything defaults to the plain lizard and automatic colours, which is exactly
+how Newt has always looked; *Use Automatic Colours* puts every colour back, and
+each one also has its own *Automatic* button. The preview sits on your actual
+desktop picture, so you can see whether a choice survives your own wallpaper.
 
 **Schedule** — *Follow this schedule* plus the weekly grid. See
 [Setting a schedule](#setting-a-schedule).
@@ -141,13 +152,6 @@ always opens the menu.
 they can hold your Mac awake while they work. Claude Code is supported today;
 others are listed greyed out until they are. See
 [below](#keeping-the-mac-awake-while-an-ai-agent-works).
-
-**Notifications** — *Notify when keep-awake expires*, plus the indicator dot:
-whether to show it, how big it is, whether to outline it, whether it spins while
-both kinds of claim are holding, and a colour for each. The outline is what
-keeps the dot readable when a bright wallpaper shows through the menu bar, so
-leave it on unless you have a reason not to. *Use Default Colours* puts the
-colours back. A live preview shows all three states as you adjust them.
 
 ## Setting a schedule
 

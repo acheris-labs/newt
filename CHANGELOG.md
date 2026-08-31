@@ -23,9 +23,12 @@ auto-update prompt.
 
 ### Changed
 
-- The menu bar icon's colours moved from *Notifications* to the new *Icon* tab.
-  *Fill when awake*, added in 0.7.1, is now **Lizard colour** under *While
-  awake*; your setting carries over untouched.
+- **Settings ▸ Notifications is gone**, folded into the new *Icon* tab — the
+  indicator dot was always about how the icon looks. *Notify when keep-awake
+  expires* moved to *General*. *Fill when awake*, added in 0.7.1, is now
+  **Lizard colour** under *While awake*. Every setting carries over untouched.
+- Each colour now has its own *Automatic* button, so you can put one back
+  without resetting the rest.
 
 ## [0.7.1] - 2026-08-25
 

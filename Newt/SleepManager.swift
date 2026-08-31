@@ -370,25 +370,17 @@ final class SleepManager {
                                    glyphColor: awakeIconColor))
     }
 
-    /// True when both indicator dots are on the stock colours.
+    /// True when every colour — both icon looks and both dots — is automatic.
+    /// The backdrop *shapes* aren't colours, so they're deliberately excluded:
+    /// resetting colours shouldn't silently undo a style choice.
     var badgeColorsAreDefault: Bool {
-        scheduledBadgeColor == nil && dynamicBadgeColor == nil
+        [scheduledBadgeColor, dynamicBadgeColor, idleBackdropColor,
+         awakeBackdropColor, idleIconColor, awakeIconColor].allSatisfy { $0 == nil }
     }
 
     func resetBadgeColors() {
         scheduledBadgeColor = nil
         dynamicBadgeColor = nil
-    }
-
-    /// True when both icon looks are on their automatic colours. The backdrop
-    /// *shapes* aren't colours, so they're deliberately excluded: resetting
-    /// colours shouldn't silently undo a style choice.
-    var iconColorsAreDefault: Bool {
-        [idleBackdropColor, awakeBackdropColor,
-         idleIconColor, awakeIconColor].allSatisfy { $0 == nil }
-    }
-
-    func resetIconColors() {
         idleBackdropColor = nil
         awakeBackdropColor = nil
         idleIconColor = nil

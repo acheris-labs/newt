@@ -69,20 +69,17 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let idleIconWell = NSColorWell()
     private let awakeIconWell = NSColorWell()
     private let iconPreview = NSImageView()
-    private let resetIconColorsButton = NSButton(title: "Use Automatic Colours",
-                                                 target: nil, action: nil)
     private let scheduledWell = NSColorWell()
     private let dynamicWell = NSColorWell()
-    private let resetColorsButton = NSButton(title: "Use Default Colours",
+    private let resetColorsButton = NSButton(title: "Use Automatic Colours",
                                              target: nil, action: nil)
-    private let dotPreview = NSImageView()
     /// Spins the preview's split dot so the setting can be judged here rather
     /// than by squinting at the menu bar. Runs only while this window is on
     /// screen — `windowWillClose` and every `refresh()` re-check that.
     private var previewSpinTimer: Timer?
     private var previewAngle: Double = 0
 
-    private static let contentSize = NSSize(width: 600, height: 490)
+    private static let contentSize = NSSize(width: 600, height: 530)
 
     init(sleep: SleepManager, login: LoginItemController, updater: SPUUpdaterProviding) {
         self.sleep = sleep
@@ -108,7 +105,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         tabs.addTabViewItem(tab("Schedule", scheduleView()))
         tabs.addTabViewItem(tab("Left Click", leftClickView()))
         tabs.addTabViewItem(tab("Integrations", integrationsView()))
-        tabs.addTabViewItem(tab("Notifications", notificationsView()))
         content.addSubview(tabs)
 
         window.delegate = self
@@ -202,8 +198,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         spinBox.isEnabled = dotOn
         scheduledWell.isEnabled = dotOn
         dynamicWell.isEnabled = dotOn
-        resetColorsButton.isEnabled = dotOn && !sleep.badgeColorsAreDefault
-        resetIconColorsButton.isEnabled = !sleep.iconColorsAreDefault
+        resetColorsButton.isEnabled = !sleep.badgeColorsAreDefault
         idleBackdropPopup.selectItem(at: IconBackdrop.allCases.firstIndex(
             of: sleep.idleBackdrop) ?? 0)
         awakeBackdropPopup.selectItem(at: IconBackdrop.allCases.firstIndex(
@@ -226,7 +221,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         if sizeSlider.doubleValue != sleep.badgeSizeScale {
             sizeSlider.doubleValue = sleep.badgeSizeScale
         }
-        refreshDotPreview()
+        refreshIconPreview()
         updatePreviewSpin()
     }
 
@@ -248,7 +243,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             guard let self else { return }
             self.previewAngle = (self.previewAngle + (2 * .pi) / steps)
                 .truncatingRemainder(dividingBy: 2 * .pi)
-            self.refreshDotPreview()
+            self.refreshIconPreview()
         }
         RunLoop.main.add(timer, forMode: .common)
         previewSpinTimer = timer
@@ -262,9 +257,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - General
 
     private func generalView() -> NSView {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 420))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 446))
         let sliderHeight = 44.0, gapBeforeHint = 6.0, gapAfterHint = 20.0
-        var top = 398.0
+        var top = 424.0
 
         for box in [loginBox, resumeBox, autoUpdateBox] {
             box.target = self
@@ -273,6 +268,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             view.addSubview(box)
             top -= 26
         }
+        expiryBox.target = self
+        expiryBox.action = #selector(expiryToggled)
+        expiryBox.frame = NSRect(x: 20, y: top - 20, width: 480, height: 20)
+        view.addSubview(expiryBox)
+        top -= 26
         top -= 12
 
         // Desktops have nothing to run down, so the cutoff would be meaningless.
@@ -516,81 +516,104 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - Icon
 
-    /// Two states, three controls each, laid out as columns so an idle setting
-    /// and its awake counterpart sit side by side.
+    /// Everything about how the menu bar icon looks, in one place: the two
+    /// states at the top, the claim dot below, and a preview of the lot over
+    /// the real desktop picture.
     private func iconView() -> NSView {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 420))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 460))
         let idleX = 190.0, awakeX = 360.0
 
         for (title, x) in [("Idle", idleX), ("While awake", awakeX)] {
             let header = NSTextField(labelWithString: title)
             header.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
-            header.frame = NSRect(x: x, y: 380, width: 160, height: 18)
+            header.frame = NSRect(x: x, y: 420, width: 160, height: 18)
             view.addSubview(header)
         }
 
-        func rowLabel(_ text: String, y: CGFloat) {
-            let label = NSTextField(labelWithString: text)
-            label.frame = NSRect(x: 20, y: y, width: 165, height: 18)
-            view.addSubview(label)
+        func label(_ text: String, x: CGFloat, y: CGFloat, width: CGFloat = 165) {
+            let field = NSTextField(labelWithString: text)
+            field.frame = NSRect(x: x, y: y, width: width, height: 18)
+            view.addSubview(field)
         }
 
-        rowLabel("Backdrop", y: 350)
+        label("Backdrop", x: 20, y: 388)
         for (popup, x) in [(idleBackdropPopup, idleX), (awakeBackdropPopup, awakeX)] {
             popup.removeAllItems()
             popup.addItems(withTitles: IconBackdrop.allCases.map(\.menuTitle))
-            popup.frame = NSRect(x: x, y: 344, width: 150, height: 25)
+            popup.frame = NSRect(x: x, y: 384, width: 150, height: 25)
             popup.target = self
             popup.action = #selector(backdropChanged(_:))
             view.addSubview(popup)
         }
 
         // A colour well can't express "unset", so without an explicit Automatic
-        // there is no way back to the adaptive default once you've picked one —
-        // and the light/dark behaviour would be lost for good.
-        func colorRow(_ title: String, y: CGFloat, wells: [(NSColorWell, CGFloat)]) {
-            rowLabel(title, y: y + 4)
-            for (well, x) in wells {
-                well.frame = NSRect(x: x, y: y, width: 44, height: 24)
-                well.target = self
-                well.action = #selector(colorChanged(_:))
-                view.addSubview(well)
-                let auto = NSButton(title: "Automatic", target: self,
-                                    action: #selector(resetOneColor(_:)))
-                auto.bezelStyle = .rounded
-                auto.controlSize = .small
-                auto.font = .systemFont(ofSize: 11)
-                auto.frame = NSRect(x: x + 50, y: y + 1, width: 84, height: 22)
-                auto.identifier = well.identifier
-                view.addSubview(auto)
-            }
+        // there is no way back to the adaptive default once you've picked a
+        // colour, and the light/dark behaviour would be lost for good.
+        func well(_ colorWell: NSColorWell, id: String, x: CGFloat, y: CGFloat) {
+            colorWell.identifier = .init(id)
+            colorWell.frame = NSRect(x: x, y: y, width: 44, height: 24)
+            colorWell.target = self
+            colorWell.action = #selector(colorChanged(_:))
+            view.addSubview(colorWell)
+            let auto = NSButton(title: "Automatic", target: self,
+                                action: #selector(resetOneColor(_:)))
+            auto.bezelStyle = .rounded
+            auto.controlSize = .small
+            auto.font = .systemFont(ofSize: 11)
+            auto.frame = NSRect(x: x + 50, y: y + 1, width: 84, height: 22)
+            auto.identifier = .init(id)
+            view.addSubview(auto)
         }
 
-        idleBackdropWell.identifier = .init("idleBackdrop")
-        awakeBackdropWell.identifier = .init("awakeBackdrop")
-        idleIconWell.identifier = .init("idleGlyph")
-        awakeIconWell.identifier = .init("awakeGlyph")
-        colorRow("Backdrop colour", y: 306,
-                 wells: [(idleBackdropWell, idleX), (awakeBackdropWell, awakeX)])
-        colorRow("Lizard colour", y: 272,
-                 wells: [(idleIconWell, idleX), (awakeIconWell, awakeX)])
+        label("Backdrop colour", x: 20, y: 354)
+        well(idleBackdropWell, id: "idleBackdrop", x: idleX, y: 350)
+        well(awakeBackdropWell, id: "awakeBackdrop", x: awakeX, y: 350)
+        label("Lizard colour", x: 20, y: 320)
+        well(idleIconWell, id: "idleGlyph", x: idleX, y: 316)
+        well(awakeIconWell, id: "awakeGlyph", x: awakeX, y: 316)
+
+        let dotHeader = NSTextField(labelWithString: "Indicator dot")
+        dotHeader.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
+        dotHeader.frame = NSRect(x: 20, y: 282, width: 300, height: 18)
+        view.addSubview(dotHeader)
+
+        for (box, y, x) in [(dotBox, 256.0, 20.0), (outlineBox, 232.0, 40.0),
+                            (spinBox, 210.0, 40.0)] {
+            box.target = self
+            box.action = #selector(dotSettingChanged)
+            box.frame = NSRect(x: x, y: y, width: 480, height: 20)
+            view.addSubview(box)
+        }
+
+        label("Size", x: 40, y: 184, width: 40)
+        sizeSlider.target = self
+        sizeSlider.action = #selector(dotSettingChanged)
+        sizeSlider.isContinuous = true
+        sizeSlider.frame = NSRect(x: 80, y: 182, width: 180, height: 20)
+        view.addSubview(sizeSlider)
+
+        // The colour carries meaning — which claim is holding — so the wells are
+        // labelled by what they mean, not "colour 1" and "colour 2".
+        label("Slider or schedule", x: 40, y: 156, width: 150)
+        well(scheduledWell, id: "scheduled", x: idleX, y: 152)
+        label("Dynamic claim", x: 40, y: 124, width: 150)
+        well(dynamicWell, id: "dynamic", x: idleX, y: 120)
 
         // Drawn over the real desktop picture: the whole point of a backdrop is
         // whether the icon survives what is behind the menu bar, and a swatch on
         // this window's own grey can't show that.
-        iconPreview.frame = NSRect(x: 20, y: 176, width: 520, height: 64)
+        iconPreview.frame = NSRect(x: 20, y: 44, width: 520, height: 64)
         iconPreview.imageScaling = .scaleNone
         iconPreview.wantsLayer = true
         iconPreview.layer?.cornerRadius = 8
         iconPreview.layer?.masksToBounds = true
         view.addSubview(iconPreview)
 
-        resetIconColorsButton.frame = NSRect(x: 20, y: 138, width: 190, height: 28)
-        resetIconColorsButton.bezelStyle = .rounded
-        resetIconColorsButton.target = self
-        resetIconColorsButton.action = #selector(resetIconColors)
-        view.addSubview(resetIconColorsButton)
-
+        resetColorsButton.frame = NSRect(x: 20, y: 8, width: 190, height: 28)
+        resetColorsButton.bezelStyle = .rounded
+        resetColorsButton.target = self
+        resetColorsButton.action = #selector(resetColors)
+        view.addSubview(resetColorsButton)
         return view
     }
 
@@ -606,12 +629,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         case "idleBackdrop":  sleep.idleBackdropColor = nil
         case "awakeBackdrop": sleep.awakeBackdropColor = nil
         case "idleGlyph":     sleep.idleIconColor = nil
-        default:              sleep.awakeIconColor = nil
+        case "awakeGlyph":    sleep.awakeIconColor = nil
+        case "scheduled":     sleep.scheduledBadgeColor = nil
+        default:              sleep.dynamicBadgeColor = nil
         }
         refresh()
     }
 
-    /// The three states worth judging, over the desktop picture.
+    /// The states worth judging, over the desktop picture.
     private func refreshIconPreview() {
         let box = iconPreview.bounds
         let image = NSImage(size: box.size, flipped: false) { rect in
@@ -629,15 +654,22 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 NSColor.windowBackgroundColor.setFill()
                 rect.fill()
             }
-            let states: [(Bool, StatusItemController.ClaimBadge?)] =
-                [(false, nil), (true, nil), (true, .scheduled), (true, .both)]
-            let labels = ["idle", "awake", "+ claim", "+ both"]
+            // Without the dot, the claim states are indistinguishable from
+            // plain "awake" — three identical lizards under three labels.
+            let dotOn = self.sleep.isNotificationEnabled(.badgeWhenEngaged)
+            var states: [(Bool, StatusItemController.ClaimBadge?)] = [(false, nil), (true, nil)]
+            var labels = ["idle", "awake"]
+            if dotOn {
+                states += [(true, .scheduled), (true, .both)]
+                labels += ["+ claim", "+ both"]
+            }
             let step = rect.width / Double(states.count)
             for (i, state) in states.enumerated() {
                 let mid = step * (Double(i) + 0.5)
+                var style = self.sleep.badgeStyle
+                if state.1 == .both { style.rotation = self.previewAngle }
                 if let icon = StatusItemController.statusImage(
-                    active: state.0, badge: state.1, suppressed: false,
-                    style: self.sleep.badgeStyle) {
+                    active: state.0, badge: state.1, suppressed: false, style: style) {
                     let h = 22.0, ratio = icon.size.width / icon.size.height
                     icon.draw(in: NSRect(x: mid - h * ratio / 2, y: rect.midY - 3,
                                          width: h * ratio, height: h))
@@ -668,78 +700,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         return NSImage(contentsOf: url)
     }()
 
-    // MARK: - Notifications
-
-    private func notificationsView() -> NSView {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 326))
-        expiryBox.target = self
-        expiryBox.action = #selector(expiryToggled)
-        expiryBox.frame = NSRect(x: 20, y: 274, width: 480, height: 20)
-        view.addSubview(expiryBox)
-
-
-        let dotHeader = NSTextField(labelWithString: "Indicator dot")
-        dotHeader.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
-        dotHeader.frame = NSRect(x: 20, y: 226, width: 300, height: 18)
-        view.addSubview(dotHeader)
-
-        dotBox.target = self
-        dotBox.action = #selector(dotSettingChanged)
-        dotBox.frame = NSRect(x: 20, y: 200, width: 480, height: 20)
-        view.addSubview(dotBox)
-
-        outlineBox.target = self
-        outlineBox.action = #selector(dotSettingChanged)
-        outlineBox.frame = NSRect(x: 40, y: 176, width: 460, height: 20)
-        view.addSubview(outlineBox)
-
-        spinBox.target = self
-        spinBox.action = #selector(dotSettingChanged)
-        spinBox.frame = NSRect(x: 40, y: 154, width: 460, height: 20)
-        view.addSubview(spinBox)
-
-        let sizeLabel = NSTextField(labelWithString: "Size")
-        sizeLabel.frame = NSRect(x: 40, y: 126, width: 40, height: 18)
-        view.addSubview(sizeLabel)
-        sizeSlider.target = self
-        sizeSlider.action = #selector(dotSettingChanged)
-        sizeSlider.isContinuous = true
-        sizeSlider.frame = NSRect(x: 80, y: 124, width: 180, height: 20)
-        view.addSubview(sizeSlider)
-
-        // The colour carries meaning — which claim is holding — so the wells are
-        // labelled by what they mean, not "colour 1" and "colour 2".
-        let scheduledLabel = NSTextField(labelWithString: "Slider or schedule")
-        scheduledLabel.frame = NSRect(x: 40, y: 96, width: 140, height: 18)
-        view.addSubview(scheduledLabel)
-        scheduledWell.frame = NSRect(x: 186, y: 92, width: 44, height: 24)
-        scheduledWell.target = self
-        scheduledWell.action = #selector(colorChanged(_:))
-        view.addSubview(scheduledWell)
-
-        let dynamicLabel = NSTextField(labelWithString: "Dynamic claim")
-        dynamicLabel.frame = NSRect(x: 40, y: 68, width: 140, height: 18)
-        view.addSubview(dynamicLabel)
-        dynamicWell.frame = NSRect(x: 186, y: 64, width: 44, height: 24)
-        dynamicWell.target = self
-        dynamicWell.action = #selector(colorChanged(_:))
-        view.addSubview(dynamicWell)
-
-        resetColorsButton.frame = NSRect(x: 240, y: 62, width: 170, height: 28)
-        resetColorsButton.bezelStyle = .rounded
-        resetColorsButton.target = self
-        resetColorsButton.action = #selector(resetColors)
-        view.addSubview(resetColorsButton)
-
-        // Live preview, so size and colour can be judged without going up to the
-        // menu bar and engaging something.
-        dotPreview.frame = NSRect(x: 290, y: 112, width: 200, height: 44)
-        dotPreview.imageScaling = .scaleNone
-        view.addSubview(dotPreview)
-
-        return view
-    }
-
     @objc private func expiryToggled() {
         let on = expiryBox.state == .on
         sleep.setNotificationOption(.notifyOnExpiry, enabled: on)
@@ -764,11 +724,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         refresh()
     }
 
-    @objc private func resetIconColors() {
-        sleep.resetIconColors()
-        refresh()
-    }
-
     @objc private func dotSettingChanged(_ sender: NSControl) {
         switch sender {
         case dotBox:     sleep.setNotificationOption(.badgeWhenEngaged, enabled: dotBox.state == .on)
@@ -781,27 +736,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     /// The three dot states side by side at menu bar size, drawn by the same
     /// function the status item uses so the preview can't drift from reality.
-    private func refreshDotPreview() {
-        let glyph = 18.0, gap = 26.0
-        let image = NSImage(size: NSSize(width: gap * 3, height: 22), flipped: false) { _ in
-            let badges: [StatusItemController.ClaimBadge] = [.scheduled, .dynamic, .both]
-            for (i, badge) in badges.enumerated() {
-                var style = self.sleep.badgeStyle
-                if badge == .both { style.rotation = self.previewAngle }
-                guard let icon = StatusItemController.statusImage(
-                    active: true, badge: badge, suppressed: false,
-                    style: style) else { continue }
-                let ratio = icon.size.width / icon.size.height
-                icon.draw(in: NSRect(x: Double(i) * gap, y: 2,
-                                     width: glyph * ratio, height: glyph))
-            }
-            return true
-        }
-        image.isTemplate = false
-        dotPreview.image = image
-        dotPreview.alphaValue = sleep.isNotificationEnabled(.badgeWhenEngaged) ? 1 : 0.35
-    }
-
     // MARK: - Shared bits
 
     /// Places a hint with its top edge at `top` and returns its bottom edge, so
