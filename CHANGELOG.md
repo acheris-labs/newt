@@ -11,6 +11,8 @@ auto-update prompt.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-31
+
 ### Added
 
 - **A backdrop for the menu bar icon** (*Settings ▸ Icon*). A transparent menu
@@ -444,7 +446,8 @@ Initial public release.
   `SMAppService.daemon(plistName:)`.
 - Lizard menu bar icon (filled when engaged, outline when idle).
 
-[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/acheris-labs/newt/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/acheris-labs/newt/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/acheris-labs/newt/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/acheris-labs/newt/compare/v0.5.0...v0.6.0
