@@ -38,7 +38,7 @@ Two binaries inside one `.app` bundle, plus a small shared protocol.
 - `IntegrationInstaller.swift` installs Newt into an AI agent, by one of two `Method`s. Both identify our own entries by the `newt://claim?` marker and touch nothing else.
   - `.jsonHooks` (Claude Code) merges into `~/.claude/settings.json`, which other tools also write to: back up first, add only our entries, never rewrite a key we didn't add. The hooks are self-contained shell one-liners — `sed` pulls `session_id` off stdin, and `$PPID` **is** the agent process (a `command` hook runs as its direct child), which is where the pid to watch and the tty to label with come from. No jq/python dependency.
   - `.pluginFile` (opencode) writes `Newt/Resources/newt-opencode.js` to `~/.config/opencode/plugin/`, a file Newt owns outright — so no merge, no backup, and uninstall is a delete. It refuses to overwrite or delete a file at that path without our marker. opencode has **no** hook that fires when a turn starts (its only shell hooks are `experimental.hook.file_edited` and `session_completed`), so a plugin is the sole way to raise a claim; it globs `{plugin,plugins}/*.{ts,js}` in its config dirs at startup, and `opencode.json` is never read. A path-loaded plugin **must** export `id` as well as `server` or it fails to load — the published types mark `id` optional because npm plugins take theirs from `package.json`, and the failure is only a log line. The plugin claims on `session.status` → `busy` and releases on `idle`; `retry` holds, since that's a stalled request still working. `refreshInstalledPlugins()` rewrites a stale plugin at launch, since a Newt upgrade otherwise leaves the old file in place.
-- `SettingsWindowController.swift` is the app's only `NSWindow`: an `NSTabView` of General / Schedule / Left Click / Notifications. Every control writes straight through to `SleepManager` on change — no OK or Apply. `SPUUpdaterProviding` is a one-property protocol so this file doesn't import Sparkle and can be exercised in a harness with a stub.
+- `SettingsWindowController.swift` is the app's only `NSWindow`: an `NSTabView` of General / Wake Modes / Icon / Schedule / Left Click / Integrations. Every control writes straight through to `SleepManager` on change — no OK or Apply. `SPUUpdaterProviding` is a one-property protocol so this file doesn't import Sparkle and can be exercised in a harness with a stub.
 - `ScheduleGridView.swift` is the custom weekly grid (drag to add/move/resize, overnight wrap). It's hosted by the Schedule tab, but knows nothing about it — it just reports a `WeeklySchedule` through `onChange`.
 - `HelperClient.swift` registers the daemon via `SMAppService.daemon(plistName:)` and brokers XPC calls (`setDisableSleep`) over an `NSXPCConnection` with identifier-pinned code requirements on both ends.
 - `BatteryMonitor.swift` polls `IOPSCopyPowerSourcesInfo` every 15s while engaged; trips disengage when on battery and percent ≤ user-configured threshold.
@@ -94,6 +94,20 @@ button with no window, so without the guard the next wake drags the icon back
 out. Getting it back is `revealStatusItem()`, which is already wired to
 re-opening the app.
 
+**Drawing the icon.** `StatusItemController.statusImage` is the only renderer.
+It picks one `IconLook` — `active ? style.awake : style.idle` — and every
+decision follows from it, so the two states can't drift apart. A *template*
+image (which AppKit auto-tints) survives only when nothing needs colour: no
+badge, no chosen glyph colour, no backdrop. A nil colour in an `IconLook` means
+"work it out" and is resolved **inside the drawing block**, where it picks up
+the menu bar's own appearance — which is why the automatic backdrop inverts
+between light and dark, and why it follows the *menu bar*, not the system
+setting (a dark wallpaper keeps the bar dark in Light Mode). `.circle` uses SF
+Symbols' two-layer `lizard.circle.fill` via `paletteColors`; a flat tint would
+colour the disc and knock the lizard out of it. A backdrop enlarges the canvas,
+so the claim and caution badges size themselves from the *glyph* height, not
+`rect.height`, or they'd inflate with it.
+
 The schedule's `boundaryTimer` is a one-shot armed at the next edge, not a
 poll. Wall-clock jumps it can't see — sleep/wake, clock set, time zone — are
 covered by three notification observers that just call `reconcile()`.
@@ -104,7 +118,7 @@ covered by three notification observers that just call `reconcile()`.
 
 ### UserDefaults keys (all in standard defaults)
 
-`BatteryThresholdPercent`, `WakeMode.<rawValue>` (one per case), `LeftClickAction`, `LastUsedSliderPosition`, `FixedClickSliderPosition`, `ScheduleEnabled`, `ScheduleBlocks` (JSON `Data`), `SuppressedUntil` (`Double`, absent = not suppressed), `BadgeSizeScale` (`Double`), `BadgeOutline` (`Bool`), `BadgeSpin` (`Bool`), `HideIconAfterPosition` (`Int`, **absent = the top stop, i.e. never hide**), `BadgeColorScheduled` / `BadgeColorDynamic` / `IconColorAwake` (`[Double]` sRGB components; **absent means "use the system colour"**, which keeps the default dynamic across light/dark — don't write the system colour's components into them). All have sensible defaults for fresh installs — never add a migration that breaks an upgrade.
+`BatteryThresholdPercent`, `WakeMode.<rawValue>` (one per case), `LeftClickAction`, `LastUsedSliderPosition`, `FixedClickSliderPosition`, `ScheduleEnabled`, `ScheduleBlocks` (JSON `Data`), `SuppressedUntil` (`Double`, absent = not suppressed), `BadgeSizeScale` (`Double`), `BadgeOutline` (`Bool`), `BadgeSpin` (`Bool`), `HideIconAfterPosition` (`Int`, **absent = the top stop, i.e. never hide**), `IconBackdropIdle` / `IconBackdropAwake` (`String`, an `IconBackdrop` rawValue, **absent = `.none`**), `BadgeColorScheduled` / `BadgeColorDynamic` / `IconColorGlyphIdle` / `IconColorAwake` / `IconColorBackdropIdle` / `IconColorBackdropAwake` (`[Double]` sRGB components; **absent means "use the system colour"**, which keeps the default dynamic across light/dark — don't write the system colour's components into them). All have sensible defaults for fresh installs — never add a migration that breaks an upgrade.
 
 AppKit also persists the status item's visibility itself, as `NSStatusItem
 VisibleCC NewtStatusItem`. Newt never writes that key — `configureStatusItem()`
@@ -173,8 +187,8 @@ the user, and skip how it's implemented.
 Settings live in one of two places, and the split is deliberate: the **menu**
 keeps what's worth changing on the spot (the Keep awake slider, the schedule
 switch, Suppress, Claims), and the **Settings window** takes what you set once —
-the battery floor, wake modes, schedule hours, left-click action, integrations
-and notifications. Both read through `SleepManager` and are redrawn by
+the battery floor, wake modes, icon appearance, schedule hours, left-click
+action and integrations. Both read through `SleepManager` and are redrawn by
 `StatusItemController.refresh()` — a view must never read or write UserDefaults
 directly, or the two surfaces drift.
 

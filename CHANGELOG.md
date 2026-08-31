@@ -11,6 +11,27 @@ auto-update prompt.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-31
+
+### Added
+
+- **A backdrop for the menu bar icon** (*Settings ▸ Icon*). A transparent menu
+  bar lets your wallpaper through, and a pale one can swallow the lizard, so it
+  can now sit on an outline, a glow or a circle. Idle and awake are two
+  separate looks — each with its own backdrop and its own two colours — so the
+  icon can change shape as well as colour when Newt starts holding your Mac
+  awake. The preview draws on your real desktop picture, since that's the thing
+  the icon has to survive. Defaults to the plain lizard Newt has always had.
+
+### Changed
+
+- **Settings ▸ Notifications is gone**, folded into the new *Icon* tab — the
+  indicator dot was always about how the icon looks. *Notify when keep-awake
+  expires* moved to *General*. *Fill when awake*, added in 0.7.1, is now
+  **Lizard colour** under *While awake*. Every setting carries over untouched.
+- Each colour now has its own *Automatic* button, so you can put one back
+  without resetting the rest.
+
 ## [0.7.1] - 2026-08-25
 
 ### Added
@@ -425,7 +446,8 @@ Initial public release.
   `SMAppService.daemon(plistName:)`.
 - Lizard menu bar icon (filled when engaged, outline when idle).
 
-[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/acheris-labs/newt/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/acheris-labs/newt/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/acheris-labs/newt/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/acheris-labs/newt/compare/v0.5.0...v0.6.0

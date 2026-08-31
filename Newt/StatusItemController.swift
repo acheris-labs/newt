@@ -756,7 +756,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let style = sleep.badgeStyle
         let appearance = statusItem.button?.effectiveAppearance.name.rawValue ?? ""
         let key = "\(style.scale)|\(style.outline)|\(style.scheduled)|\(style.dynamic)"
-            + "|\(String(describing: style.awakeFill))|\(appearance)"
+            + "|\(style.idle)|\(style.awake)|\(appearance)"
         guard key != badgeSpinFramesKey || badgeSpinFrames.isEmpty else { return }
         badgeSpinFramesKey = key
         badgeSpinFrames = (0 ..< Self.spinFrameCount).compactMap { i in
@@ -813,51 +813,164 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         alert.runModal()
     }
 
-    /// The menu bar image. A template lizard (AppKit auto-tints it for the menu
-    /// bar) whenever nothing needs colour; `suppressed` adds a caution badge,
-    /// and a claim badge or a custom awake fill makes a non-template composite
-    /// instead — neither a coloured dot nor a coloured glyph can live in a
-    /// template image. `appearanceObservation` re-renders on light/dark menu bar
-    /// flips.
+    /// The menu bar image for a given state. `idle` and `awake` are separate
+    /// looks, so this picks one and every decision below follows from it.
     ///
-    /// `badged` and `suppressed` can't both be set: the badge only appears while
-    /// engaged, and suppression is what stops Newt engaging.
+    /// A template image (which AppKit auto-tints for the menu bar) is used
+    /// whenever nothing here needs colour. Anything else — a claim dot, a
+    /// chosen glyph colour, or any backdrop — has to be a non-template
+    /// composite, and `appearanceObservation` re-renders it on light/dark flips.
     ///
     /// Static so it can be rendered without a live status item.
     static func statusImage(active: Bool, badge: ClaimBadge?, suppressed: Bool,
                             style: BadgeStyle = BadgeStyle()) -> NSImage? {
+        let look = active ? style.awake : style.idle
         let symbol = active ? "lizard.fill" : "lizard"
         guard let base = NSImage(systemSymbolName: symbol,
                                  accessibilityDescription: "Newt") else { return nil }
-        if suppressed {
-            let image = NSImage(size: base.size, flipped: false) { rect in
-                base.draw(in: rect)
-                NSColor.labelColor.set()
-                rect.fill(using: .sourceAtop)
-                drawCautionBadge(in: rect)
-                return true
-            }
-            image.isTemplate = false
-            return image
-        }
-        // The custom fill is for "Newt is holding your Mac awake"; idle stays
-        // the menu bar's own colour, or the state would stop being readable.
-        let fill = active ? style.awakeFill : nil
-        guard badge != nil || fill != nil else {
+        guard suppressed || badge != nil
+                || look.backdrop != .none || look.glyphColor != nil else {
             base.isTemplate = true
             return base
         }
-        let image = NSImage(size: base.size, flipped: false) { rect in
-            // Tint the glyph, then stamp the dot on top. `labelColor` resolves
-            // against the current drawing appearance.
-            base.draw(in: rect)
-            (fill ?? .labelColor).set()
-            rect.fill(using: .sourceAtop)
-            if let badge { drawClaimBadge(in: rect, badge: badge, style: style) }
+        let canvas = canvasSize(for: look.backdrop, base: base.size)
+        // A round backdrop's edge falls short of the canvas corner a badge would
+        // otherwise sit in, so pull it back in.
+        let inset = look.backdrop == .circle
+            ? canvas.height * 0.1
+            : backdropMargin(look.backdrop, glyphHeight: base.size.height)
+        let image = NSImage(size: canvas, flipped: false) { rect in
+            drawIcon(base, in: rect, look: look)
+            if suppressed {
+                drawCautionBadge(in: rect, basis: base.size.height, cornerInset: inset)
+            } else if let badge {
+                drawClaimBadge(in: rect, badge: badge, style: style,
+                               basis: base.size.height, cornerInset: inset)
+            }
             return true
         }
         image.isTemplate = false
         return image
+    }
+
+    /// How far a backdrop reaches beyond the glyph. Derived from the glyph's own
+    /// height rather than the canvas, because the canvas is sized *from* this —
+    /// taking it from the canvas would be circular, and the margin would end up
+    /// smaller than the thing it has to hold.
+    private static func backdropMargin(_ backdrop: IconBackdrop,
+                                       glyphHeight: CGFloat) -> CGFloat {
+        switch backdrop {
+        case .none, .circle: return 0
+        case .outline:       return outlineWidth(glyphHeight: glyphHeight) + 1
+        case .glow:          return glowRadius(glyphHeight: glyphHeight)
+        }
+    }
+
+    private static func outlineWidth(glyphHeight: CGFloat) -> CGFloat {
+        max(1, glyphHeight * 0.065)
+    }
+
+    private static func glowRadius(glyphHeight: CGFloat) -> CGFloat {
+        glyphHeight * 0.16
+    }
+
+    /// Room for the backdrop to live in. Only the shapes that draw outside the
+    /// glyph need it, so the plain icon keeps exactly the size — and therefore
+    /// the dot placement — it has always had.
+    private static func canvasSize(for backdrop: IconBackdrop, base: NSSize) -> NSSize {
+        switch backdrop {
+        case .none:
+            return base
+        case .outline, .glow:
+            let margin = backdropMargin(backdrop, glyphHeight: base.height)
+            return NSSize(width: base.width + margin * 2, height: base.height + margin * 2)
+        case .circle:
+            let d = max(base.width, base.height) + 2
+            return NSSize(width: d, height: d)
+        }
+    }
+
+    /// The backdrop a colour has to be to lift the glyph off the wallpaper: the
+    /// opposite end of the scale. Resolved from the glyph at draw time, so it
+    /// follows the menu bar between light and dark rather than freezing.
+    static func contrasting(to color: NSColor) -> NSColor {
+        let rgb = color.usingColorSpace(.sRGB) ?? .white
+        let luma = 0.299 * rgb.redComponent
+                 + 0.587 * rgb.greenComponent
+                 + 0.114 * rgb.blueComponent
+        return luma > 0.5 ? NSColor(white: 0, alpha: 0.85) : NSColor(white: 1, alpha: 0.9)
+    }
+
+    static func tinted(_ image: NSImage, _ color: NSColor) -> NSImage {
+        NSImage(size: image.size, flipped: false) { rect in
+            image.draw(in: rect)
+            color.set()
+            rect.fill(using: .sourceAtop)
+            return true
+        }
+    }
+
+    /// Draws one `IconLook` into `rect`. `.circle` is deliberately state-neutral:
+    /// it always uses the filled symbol, because its outlined pair is a ring
+    /// rather than a disc and would let the wallpaper straight back through.
+    private static func drawIcon(_ base: NSImage, in rect: NSRect, look: IconLook) {
+        let glyphColor = look.glyphColor ?? .labelColor
+        let backColor = look.backdropColor ?? contrasting(to: glyphColor)
+
+        // `.circle` swaps the glyph for SF Symbols' own lizard-in-a-disc, which
+        // is a two-layer symbol: palette colours the lizard and the disc
+        // separately. A flat tint would colour the disc and knock the lizard
+        // out of it, letting the wallpaper through the very shape we're trying
+        // to make readable.
+        if look.backdrop == .circle {
+            let side = min(rect.width, rect.height)
+            let config = NSImage.SymbolConfiguration(pointSize: side, weight: .regular)
+                .applying(.init(paletteColors: [glyphColor, backColor]))
+            if let disc = NSImage(systemSymbolName: "lizard.circle.fill",
+                                  accessibilityDescription: "Newt")?
+                .withSymbolConfiguration(config) {
+                let ratio = disc.size.width / disc.size.height
+                disc.draw(in: NSRect(x: rect.midX - side * ratio / 2,
+                                     y: rect.midY - side / 2,
+                                     width: side * ratio, height: side))
+                return
+            }
+            // Falling through rather than returning: without the symbol this
+            // would draw nothing at all, leaving a blank gap in the menu bar.
+        }
+
+        // Drawn at its natural size, centred: the canvas was enlarged to leave
+        // room for the ring or the blur, and scaling the glyph up to fill it
+        // would eat exactly that margin and clip the backdrop at the edge.
+        let glyph = NSRect(x: rect.midX - base.size.width / 2,
+                           y: rect.midY - base.size.height / 2,
+                           width: base.size.width, height: base.size.height)
+
+        switch look.backdrop {
+        case .none, .circle:
+            break
+        case .outline:
+            // Dilate the glyph in every direction — a stroke around an arbitrary
+            // symbol path, without needing the path itself.
+            let ring = tinted(base, backColor)
+            let width = outlineWidth(glyphHeight: base.size.height)
+            for step in stride(from: 0.0, to: 2 * .pi, by: .pi / 10) {
+                ring.draw(in: glyph.offsetBy(dx: cos(step) * width, dy: sin(step) * width))
+            }
+        case .glow:
+            NSGraphicsContext.saveGraphicsState()
+            let shadow = NSShadow()
+            shadow.shadowColor = backColor.withAlphaComponent(0.95)
+            shadow.shadowBlurRadius = glowRadius(glyphHeight: base.size.height)
+            shadow.shadowOffset = .zero
+            shadow.set()
+            // One pass is too faint to rescue a thin glyph against a bright
+            // wallpaper; the shadow compounds where the passes overlap.
+            let lit = tinted(base, glyphColor)
+            for _ in 0 ..< 3 { lit.draw(in: glyph) }
+            NSGraphicsContext.restoreGraphicsState()
+        }
+        tinted(base, glyphColor).draw(in: glyph)
     }
 
     /// What's holding the Mac awake, for the indicator dot: the long-lived
@@ -878,11 +991,18 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// merging into the glyph, and an outline in `labelColor` — the one color
     /// AppKit has already chosen to be readable against this menu bar —
     /// separates it from whatever is showing through behind.
-    static func drawClaimBadge(in rect: NSRect, badge: ClaimBadge, style: BadgeStyle) {
-        let d = rect.height * style.scale
+    /// `basis` is the height the dot is sized from — the glyph's, not the
+    /// canvas's, so a backdrop that enlarges the canvas doesn't inflate the dot
+    /// with it. `cornerInset` pulls it in for a round backdrop, whose edge falls
+    /// short of the canvas corner the dot would otherwise sit in.
+    static func drawClaimBadge(in rect: NSRect, badge: ClaimBadge, style: BadgeStyle,
+                               basis: CGFloat? = nil, cornerInset: CGFloat = 0) {
+        let height = basis ?? rect.height
+        let d = height * style.scale
         // Bottom-right corner (rect is unflipped, so minY is the bottom).
-        let dot = NSRect(x: rect.maxX - d, y: rect.minY, width: d, height: d)
-        let ring = max(1, (rect.height * 0.06).rounded())
+        let dot = NSRect(x: rect.maxX - d - cornerInset, y: rect.minY + cornerInset,
+                         width: d, height: d)
+        let ring = max(1, (height * 0.06).rounded())
 
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current?.compositingOperation = .destinationOut
@@ -930,19 +1050,22 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// that order, giving an opaque badge with a dark exclamation. Tinting the
     /// plain symbol instead would leave the mark as negative space, which loses
     /// contrast against a light menu bar.
-    private static func drawCautionBadge(in rect: NSRect) {
+    private static func drawCautionBadge(in rect: NSRect, basis: CGFloat? = nil,
+                                         cornerInset: CGFloat = 0) {
         let config = NSImage.SymbolConfiguration(paletteColors: [.black, .systemYellow])
         guard let warning = NSImage(systemSymbolName: "exclamationmark.triangle.fill",
                                     accessibilityDescription: nil)?
                                 .withSymbolConfiguration(config) else { return }
-        let side = rect.height * 0.62
+        let height = basis ?? rect.height
+        let side = height * 0.62
         // Bottom-right corner (rect is unflipped, so minY is the bottom).
-        let badge = NSRect(x: rect.maxX - side, y: rect.minY, width: side, height: side)
+        let badge = NSRect(x: rect.maxX - side - cornerInset, y: rect.minY + cornerInset,
+                           width: side, height: side)
 
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current?.compositingOperation = .destinationOut
         NSColor.black.setFill()
-        NSBezierPath(ovalIn: badge.insetBy(dx: -rect.height * 0.06, dy: -rect.height * 0.06)).fill()
+        NSBezierPath(ovalIn: badge.insetBy(dx: -height * 0.06, dy: -height * 0.06)).fill()
         NSGraphicsContext.restoreGraphicsState()
 
         warning.draw(in: badge)
