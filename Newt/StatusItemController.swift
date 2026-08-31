@@ -836,8 +836,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let canvas = canvasSize(for: look.backdrop, base: base.size)
         // A round backdrop's edge falls short of the canvas corner a badge would
         // otherwise sit in, so pull it back in.
-        let round = look.backdrop == .circle
-        let inset = round ? canvas.height * 0.1 : 0
+        let inset = look.backdrop == .circle
+            ? canvas.height * 0.1
+            : backdropMargin(look.backdrop, glyphHeight: base.size.height)
         let image = NSImage(size: canvas, flipped: false) { rect in
             drawIcon(base, in: rect, look: look)
             if suppressed {
@@ -852,14 +853,37 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         return image
     }
 
+    /// How far a backdrop reaches beyond the glyph. Derived from the glyph's own
+    /// height rather than the canvas, because the canvas is sized *from* this —
+    /// taking it from the canvas would be circular, and the margin would end up
+    /// smaller than the thing it has to hold.
+    private static func backdropMargin(_ backdrop: IconBackdrop,
+                                       glyphHeight: CGFloat) -> CGFloat {
+        switch backdrop {
+        case .none, .circle: return 0
+        case .outline:       return outlineWidth(glyphHeight: glyphHeight) + 1
+        case .glow:          return glowRadius(glyphHeight: glyphHeight)
+        }
+    }
+
+    private static func outlineWidth(glyphHeight: CGFloat) -> CGFloat {
+        max(1, glyphHeight * 0.065)
+    }
+
+    private static func glowRadius(glyphHeight: CGFloat) -> CGFloat {
+        glyphHeight * 0.16
+    }
+
     /// Room for the backdrop to live in. Only the shapes that draw outside the
     /// glyph need it, so the plain icon keeps exactly the size — and therefore
     /// the dot placement — it has always had.
     private static func canvasSize(for backdrop: IconBackdrop, base: NSSize) -> NSSize {
         switch backdrop {
-        case .none:            return base
-        case .outline:         return NSSize(width: base.width + 3, height: base.height + 3)
-        case .glow:            return NSSize(width: base.width + 5, height: base.height + 5)
+        case .none:
+            return base
+        case .outline, .glow:
+            let margin = backdropMargin(backdrop, glyphHeight: base.height)
+            return NSSize(width: base.width + margin * 2, height: base.height + margin * 2)
         case .circle:
             let d = max(base.width, base.height) + 2
             return NSSize(width: d, height: d)
@@ -915,12 +939,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             // would draw nothing at all, leaving a blank gap in the menu bar.
         }
 
-        let h = base.size.height
-        let ratio = base.size.width / h
-        let scale = min(rect.width / (h * ratio), rect.height / h)
-        let glyph = NSRect(x: rect.midX - h * ratio * scale / 2,
-                           y: rect.midY - h * scale / 2,
-                           width: h * ratio * scale, height: h * scale)
+        // Drawn at its natural size, centred: the canvas was enlarged to leave
+        // room for the ring or the blur, and scaling the glyph up to fill it
+        // would eat exactly that margin and clip the backdrop at the edge.
+        let glyph = NSRect(x: rect.midX - base.size.width / 2,
+                           y: rect.midY - base.size.height / 2,
+                           width: base.size.width, height: base.size.height)
 
         switch look.backdrop {
         case .none, .circle:
@@ -929,7 +953,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             // Dilate the glyph in every direction — a stroke around an arbitrary
             // symbol path, without needing the path itself.
             let ring = tinted(base, backColor)
-            let width = max(1, rect.height * 0.055)
+            let width = outlineWidth(glyphHeight: base.size.height)
             for step in stride(from: 0.0, to: 2 * .pi, by: .pi / 10) {
                 ring.draw(in: glyph.offsetBy(dx: cos(step) * width, dy: sin(step) * width))
             }
@@ -937,7 +961,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             NSGraphicsContext.saveGraphicsState()
             let shadow = NSShadow()
             shadow.shadowColor = backColor.withAlphaComponent(0.95)
-            shadow.shadowBlurRadius = rect.height * 0.16
+            shadow.shadowBlurRadius = glowRadius(glyphHeight: base.size.height)
             shadow.shadowOffset = .zero
             shadow.set()
             // One pass is too faint to rescue a thin glyph against a bright
