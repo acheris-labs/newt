@@ -11,6 +11,16 @@ auto-update prompt.
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-13
+
+### Fixed
+
+- Uninstalling Newt with Homebrew now really does remove the hooks and plugin
+  files Newt added to your other tools. Homebrew runs these steps in a sandbox
+  that blocks access to your home folder, so the step meant to unwind them was
+  quietly doing nothing, and the entries were left behind. It now asks for the
+  two config locations it needs.
+
 ## [0.9.0] - 2026-09-13
 
 ### Added
@@ -469,7 +479,8 @@ Initial public release.
   `SMAppService.daemon(plistName:)`.
 - Lizard menu bar icon (filled when engaged, outline when idle).
 
-[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/acheris-labs/newt/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/acheris-labs/newt/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/acheris-labs/newt/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/acheris-labs/newt/compare/v0.7.1...v0.8.0
