@@ -63,9 +63,10 @@ enum NotificationOption: String, CaseIterable {
 /// privileged helper's `pmset disablesleep` (lid-close sleep). Disengaging
 /// undoes both.
 ///
-/// Three independent *claims* can ask for the Mac to stay awake — the duration
-/// slider, the weekly schedule, and dynamic claims raised over `newt://` (an AI
-/// agent working through its hooks, say) — and
+/// Four independent *claims* can ask for the Mac to stay awake — the duration
+/// slider, the weekly schedule, dynamic claims raised over `newt://` (an AI
+/// agent working through its hooks, say), and the lingering claim those leave
+/// behind — and
 /// two *vetoes* can refuse — the low battery floor and manual suppression.
 /// Assertions are applied when at least one claim is up and neither veto is.
 /// `reconcile()` is the only place that decides; nothing else touches the
@@ -232,6 +233,85 @@ final class SleepManager {
 
     private func applyDynamicClaimLimit() {
         dynamicClaims.maxLifetime = dynamicClaimMaxSeconds
+    }
+
+    /// Duration ladder for the lingering claim — its own table, not the Keep
+    /// awake one. A linger fills the gaps between agent turns, so the useful
+    /// range is minutes to a few hours, and the stops are bunched at the bottom
+    /// where the choice actually matters.
+    ///
+    /// No sentinel value: unlike `sliderDurations` there is no "indefinite"
+    /// stop, which would mean the Mac never slept again after the first agent
+    /// turn — the exact thing this feature exists to avoid.
+    ///   0 → off
+    ///   N → seconds for that stop.
+    static let lingerDurations: [Int] = [
+        0,             // 0   off
+        5  * 60,       // 1   5 min
+        10 * 60,       // 2   10 min
+        15 * 60,       // 3   15 min
+        20 * 60,       // 4   20 min
+        30 * 60,       // 5   30 min
+        45 * 60,       // 6   45 min
+        60 * 60,       // 7   1 h
+        90 * 60,       // 8   1 h 30 min
+        2  * 3600,     // 9   2 h
+        3  * 3600,     // 10  3 h
+        4  * 3600,     // 11  4 h
+        6  * 3600,     // 12  6 h
+        8  * 3600,     // 13  8 h
+        12 * 3600      // 14  12 h
+    ]
+
+    /// Slider position for how long a lingering claim holds on after an agent
+    /// finishes. 0 means off; 1…14 run 5m…12h on `lingerDurations`.
+    var lingerPosition: Int = 0 {
+        didSet {
+            lingerPosition = max(0, min(Self.lingerDurations.count - 1, lingerPosition))
+            guard lingerPosition != oldValue else { return }
+            UserDefaults.standard.set(lingerPosition, forKey: "LingerPosition")
+            // Switching it off has to bring the assertions down too, not just
+            // stop the next arm.
+            if lingerSeconds == nil { releaseLinger() }
+            onChange?()
+        }
+    }
+
+    /// Seconds a lingering claim holds for, or nil when the feature is off.
+    var lingerSeconds: TimeInterval? {
+        let value = Self.lingerDurations[lingerPosition]
+        return value > 0 ? TimeInterval(value) : nil
+    }
+
+    /// Label for a Linger slider stop. Reads off `lingerDurations`, so it can't
+    /// be swapped for `displayString(forSliderPosition:)` — that one walks a
+    /// different table and would label the stops wrongly.
+    static func lingerDisplayString(forSliderPosition p: Int) -> String {
+        let idx = max(0, min(lingerDurations.count - 1, p))
+        let secs = lingerDurations[idx]
+        return secs == 0 ? "off" : formatRemaining(TimeInterval(secs))
+    }
+
+    /// When the lingering claim lapses, or nil when none is held.
+    ///
+    /// Armed by a dynamic release and replaced outright by every release after
+    /// it, so an agent worked through the day holds the Mac through the day.
+    /// In memory only, like the claims it follows: a restart drops it, which
+    /// fails safe, and a live agent re-arms it on its next turn.
+    private(set) var lingerUntil: Date?
+
+    /// End of the lingering claim, or nil when none is in force.
+    var lingerClaimEnd: Date? {
+        guard let until = lingerUntil, until > Date() else { return nil }
+        return until
+    }
+
+    /// Drop the lingering claim now — the user saying "I'm done", ahead of the
+    /// clock.
+    func releaseLinger() {
+        guard lingerUntil != nil else { return }
+        lingerUntil = nil
+        reconcile()
     }
 
     /// Slider position for how long Newt stays idle before taking its icon out
@@ -554,7 +634,18 @@ final class SleepManager {
         if let stamp = defaults.object(forKey: "SuppressedUntil") as? Double {
             suppressedUntil = Date(timeIntervalSinceReferenceDate: stamp)
         }
-        dynamicClaims.onChange = { [weak self] in self?.reconcile() }
+        // The linger is armed *before* reconciling, not after. Reconciling
+        // first would see no claims left, drop the assertions and put
+        // `pmset disablesleep` through 0 — so lid-close protection would blink
+        // off at every turn boundary.
+        dynamicClaims.onChange = { [weak self] in
+            guard let self else { return }
+            if self.dynamicClaims.isEmpty, !self.isSuppressed,
+               let seconds = self.lingerSeconds {
+                self.lingerUntil = Date().addingTimeInterval(seconds)
+            }
+            self.reconcile()
+        }
         dynamicClaims.onExpired = { [weak self] claim in
             guard let self else { return }
             let held = SleepManager.displayString(forSliderPosition: self.dynamicClaimMaxPosition)
@@ -562,6 +653,7 @@ final class SleepManager {
         }
         dynamicClaimMaxPosition = defaults.object(forKey: "DynamicClaimMaxPosition") as? Int ?? 0
         applyDynamicClaimLimit()
+        lingerPosition = defaults.object(forKey: "LingerPosition") as? Int ?? 0
         hideIconAfterPosition = defaults.object(forKey: "HideIconAfterPosition") as? Int
             ?? Self.sliderDurations.count - 1
         registerSystemObservers()
@@ -601,6 +693,10 @@ final class SleepManager {
     func performLeftClickToggle() {
         if isActive {
             setSliderPosition(0)
+            // Released rather than suppressed: suppressing would also silence a
+            // live agent's claims, which is far too heavy for "not right now".
+            // The agent's next turn re-arms it, which is the point.
+            releaseLinger()
             if scheduleClaimEnd != nil { setSuppressed(true) }
             return
         }
@@ -783,6 +879,7 @@ final class SleepManager {
     /// is currently refusing it.
     var hasAnyClaim: Bool {
         hasSliderClaim || scheduleClaimEnd != nil || !dynamicClaims.isEmpty
+            || lingerClaimEnd != nil
     }
 
     private var shouldHoldAwake: Bool {
@@ -803,6 +900,7 @@ final class SleepManager {
         defer { isReconciling = false }
 
         clearExpiredSuppression()
+        clearExpiredLinger()
         // Before computing the answer: enabling the monitor polls immediately,
         // which re-enters here and is dropped by the guard above.
         updateBatteryMonitor()
@@ -834,6 +932,7 @@ final class SleepManager {
         let claimPossible = hasSliderClaim
             || (scheduleEnabled && !schedule.isEmpty)
             || !dynamicClaims.isEmpty
+            || lingerClaimEnd != nil
         if claimPossible { battery.enable() } else { battery.disable() }
     }
 
@@ -841,6 +940,11 @@ final class SleepManager {
         guard let until = suppressedUntil, until <= Date() else { return }
         suppressedUntil = nil
         UserDefaults.standard.removeObject(forKey: "SuppressedUntil")
+    }
+
+    private func clearExpiredLinger() {
+        guard let until = lingerUntil, until <= Date() else { return }
+        lingerUntil = nil
     }
 
     /// Wake at the next moment the answer could change: a schedule edge, or the
@@ -851,6 +955,12 @@ final class SleepManager {
             fire = next
         }
         if let until = suppressedUntil, until < .distantFuture {
+            fire = min(fire ?? until, until)
+        }
+        // Safe to hang off this timer only because it's a stored absolute date:
+        // reconcile() runs on every battery poll, and the fireDate check below
+        // is what stops it re-arming four times a minute.
+        if let until = lingerUntil, until > Date() {
             fire = min(fire ?? until, until)
         }
         // A second past the edge, so re-arming can't land on the same instant
@@ -937,7 +1047,7 @@ final class SleepManager {
         return formatRemaining(TimeInterval(secs))
     }
 
-    private static func formatRemaining(_ interval: TimeInterval) -> String {
+    static func formatRemaining(_ interval: TimeInterval) -> String {
         let total = max(0, Int(interval.rounded(.up)))
         let h = total / 3600
         let m = (total % 3600) / 60
@@ -1001,6 +1111,7 @@ final class SleepManager {
         state = .off
         activeDurationSeconds = 0
         sliderPosition = 0
+        lingerUntil = nil
         expiryTimer?.invalidate()
         expiryTimer = nil
         displayWindowTimer?.invalidate()
@@ -1186,6 +1297,10 @@ final class SleepManager {
             lines.append("Schedule — until \(Self.clockString(end))")
         }
         lines.append(contentsOf: dynamicClaims.sortedClaims.map(\.menuTitle))
+        if let end = lingerClaimEnd {
+            lines.append("Lingering — \(Self.formatRemaining(end.timeIntervalSinceNow))"
+                         + " left, until \(Self.clockString(end))")
+        }
         return lines
     }
 

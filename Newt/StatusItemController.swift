@@ -350,6 +350,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         sleep.dynamicClaims.removeAll()
     }
 
+    @objc private func releaseLingerClaim() {
+        sleep.releaseLinger()
+    }
+
     /// Add or remove the integration that lets an agent raise a claim while it
     /// works. Changing a file in the user's home directory is worth confirming
     /// first, and the wording has to match what actually happens — the two
@@ -664,7 +668,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
         let dynamic = sleep.dynamicClaims.sortedClaims
         claimsItem.isEnabled = !dynamic.isEmpty || sleep.hasSliderClaim
-            || sleep.scheduleClaimEnd != nil
+            || sleep.scheduleClaimEnd != nil || sleep.lingerClaimEnd != nil
         guard claimsItem.isEnabled else { return }
 
         if !dynamic.isEmpty {
@@ -688,6 +692,18 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         if let end = sleep.scheduleClaimEnd {
             let row = disabledRow("Schedule — until \(SleepManager.clockString(end))")
             row.toolTip = "Untick Use schedule, or Suppress, to release this"
+            submenu.addItem(row)
+        }
+        // Before the early return below: a linger is only shown when no agent
+        // claim is up, which is exactly when that return fires.
+        if dynamic.isEmpty, let end = sleep.lingerClaimEnd {
+            let row = NSMenuItem(title: "Lingering — "
+                                 + SleepManager.formatRemaining(end.timeIntervalSinceNow)
+                                 + " left, until \(SleepManager.clockString(end))",
+                                 action: #selector(releaseLingerClaim),
+                                 keyEquivalent: "")
+            row.target = self
+            row.toolTip = "Click to release"
             submenu.addItem(row)
         }
 
@@ -732,8 +748,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         guard spinning else {
             badgeSpinTimer?.invalidate()
             badgeSpinTimer = nil
-            badgeSpinFrames = []
-            badgeSpinFramesKey = ""
+            // The frames are kept: the badge now flips in and out of "both" at
+            // every agent turn boundary, and rebuilding all 36 each time is the
+            // work the cache exists to avoid. The key check catches staleness.
             badgeSpinFrame = 0
             return
         }
@@ -772,7 +789,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private func currentBadge() -> ClaimBadge? {
         guard sleep.isActive, sleep.isNotificationEnabled(.badgeWhenEngaged) else { return nil }
         let scheduled = sleep.hasSliderClaim || sleep.scheduleClaimEnd != nil
+        // A coasting linger badges as an agent only when it's the sole claim —
+        // otherwise it would make the dot "both" and spin it for hours.
         let dynamic = !sleep.dynamicClaims.isEmpty
+            || (sleep.lingerClaimEnd != nil && !scheduled)
         switch (scheduled, dynamic) {
         case (true, true):  return .both
         case (false, true): return .dynamic
@@ -1171,6 +1191,7 @@ final class DurationSliderView: NSView {
     private var isDragging = false
 
     init(title: String = "Keep awake",
+         maxPosition: Int = SleepManager.sliderDurations.count - 1,
          initialPosition: Int, initialText: String,
          textForPosition: @escaping (Int) -> String,
          onChange: @escaping (Int) -> Void) {
@@ -1178,7 +1199,7 @@ final class DurationSliderView: NSView {
         self.textForPosition = textForPosition
         self.slider = NSSlider(value: Double(initialPosition),
                                minValue: 0,
-                               maxValue: Double(SleepManager.sliderDurations.count - 1),
+                               maxValue: Double(maxPosition),
                                target: nil, action: nil)
         self.valueLabel = NSTextField(labelWithString: initialText)
         self.titleLabel = NSTextField(labelWithString: title)
@@ -1208,7 +1229,8 @@ final class DurationSliderView: NSView {
         // positions still results in exactly one commit at release.
         slider.target = self
         slider.action = #selector(sliderChanged(_:))
-        slider.numberOfTickMarks = SleepManager.sliderDurations.count
+        // One more tick than the max position — they're indices, not a count.
+        slider.numberOfTickMarks = maxPosition + 1
         slider.allowsTickMarkValuesOnly = true
         slider.isContinuous = true
         slider.frame = NSRect(x: 14, y: 4, width: 212, height: 18)

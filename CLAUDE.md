@@ -52,9 +52,10 @@ Two binaries inside one `.app` bundle, plus a small shared protocol.
 
 ### State model worth knowing
 
-**Claims and vetoes.** Three claims can ask for the Mac to stay awake — the
-duration slider (`state: AwakeState`), the weekly schedule, and *dynamic claims*
-raised over `newt://claim` (`dynamicClaims`, typically an AI agent's hooks) — and
+**Claims and vetoes.** Four claims can ask for the Mac to stay awake — the
+duration slider (`state: AwakeState`), the weekly schedule, *dynamic claims*
+raised over `newt://claim` (`dynamicClaims`, typically an AI agent's hooks), and
+the *lingering claim* (`lingerUntil`) those leave behind — and
 two vetoes can refuse — the low battery floor (`blockedByBattery`) and manual
 suppression (`suppressedUntil`). Assertions apply when at least one claim is up
 and neither veto is. `SleepManager.reconcile()` is the **only** function that applies or
@@ -83,6 +84,32 @@ releases — a subagent, or waiting on the user — so `DynamicClaimRegistry
 that lets go after a set time. It's armed off the claim's `since`, so
 re-raising the same id doesn't buy more time; that's what makes it a maximum
 rather than an idle timeout.
+
+**The lingering claim.** `lingerUntil` is armed whenever a dynamic release
+leaves the registry empty, to `now + lingerSeconds` (Settings ▸ General,
+`LingerPosition`, 0 = off). Every later release *replaces* it rather than
+extending it, so the end is always measured from the most recent moment nothing
+was holding. Only a dynamic release arms one — a slider session expiring or a
+schedule block ending arms nothing, the linger merely outlives them — and a
+manual revoke does arm one, since that's a claim finishing like any other.
+Nothing is armed while `isSuppressed`: the user has said "sleep now", and a
+claim they never raised shouldn't argue. The battery floor is *not* checked at
+arming, so a linger can be armed and immediately vetoed — which is the same
+shape as every other claim, and it lapses on its own clock regardless. Three
+things are load-bearing:
+
+- It is armed inside `dynamicClaims.onChange` **before** `reconcile()` runs.
+  Reconciling first would see no claims left, drop the assertions and put
+  `pmset disablesleep` through 0, so lid-close protection would blink off at
+  every agent turn boundary.
+- It is a *stored absolute* `Date`, which is the only reason
+  `scheduleBoundaryTimer()` can hang off it. Recomputing it as `now + duration`
+  anywhere would defeat that timer's `fireDate == target` guard and re-arm it on
+  every battery poll.
+- `lingerDurations` carries no sentinel, so there is no "indefinite" linger to
+  reach — one would mean the Mac never slept again after the first agent turn,
+  the exact thing the feature exists to avoid. That's a property of the table
+  rather than a clamp, so it can't be undone by a stray stored position.
 
 **Hiding the icon.** `StatusItemController` runs an idle countdown
 (`updateIdleHide()`, `HideIconAfterPosition`) that takes the status item out of
@@ -114,13 +141,13 @@ The schedule's `boundaryTimer` is a one-shot armed at the next edge, not a
 poll. Wall-clock jumps it can't see — sleep/wake, clock set, time zone — are
 covered by three notification observers that just call `reconcile()`.
 
-- The duration slider has 11 positions: 0=off, 1–9 = 1m…24h (geometric), 10 = indefinite. The table is `SleepManager.sliderDurations`.
+- The duration slider has 16 positions: 0=off, 1–14 = 30m…24h (a 30m/1h/2h ramp, then every 2 hours), 15 = indefinite. The table is `SleepManager.sliderDurations`. The Linger slider walks a **different** table, `lingerDurations` (0=off, 1–14 = 5m…12h, bunched low, no indefinite) with its own `lingerDisplayString(forSliderPosition:)` — labelling one table's stops with the other's function is the mistake to watch for. `DurationSliderView` takes a `maxPosition:` so a control can size itself to its own table; note `maxValue` and `numberOfTickMarks` are different expressions (`maxPosition` and `maxPosition + 1`), and setting both alike snaps the thumb to positions the caller never asked for.
 - Engaging applies up to 4 mechanisms, each individually toggleable in **Settings ▸ Wake Modes**: `PreventUserIdleDisplaySleep`, `PreventUserIdleSystemSleep`, `PreventSystemSleep` (IOKit assertions, no helper needed), and `pmset disablesleep` (helper-only, lid-close case). Defaults to all four on.
 - `SleepManager.engage()` is idempotent w.r.t. assertions — flipping a `WakeMode` toggle while engaged adds/drops just that assertion without bouncing the session.
 
 ### UserDefaults keys (all in standard defaults)
 
-`BatteryThresholdPercent`, `WakeMode.<rawValue>` (one per case), `LeftClickAction`, `LastUsedSliderPosition`, `FixedClickSliderPosition`, `ScheduleEnabled`, `ScheduleBlocks` (JSON `Data`), `SuppressedUntil` (`Double`, absent = not suppressed), `BadgeSizeScale` (`Double`), `BadgeOutline` (`Bool`), `BadgeSpin` (`Bool`), `HideIconAfterPosition` (`Int`, **absent = the top stop, i.e. never hide**), `IconBackdropIdle` / `IconBackdropAwake` (`String`, an `IconBackdrop` rawValue, **absent = `.none`**), `IconCutoutIdle` / `IconCutoutAwake` (`Bool`), `BadgeColorScheduled` / `BadgeColorDynamic` / `IconColorGlyphIdle` / `IconColorAwake` / `IconColorBackdropIdle` / `IconColorBackdropAwake` (`[Double]` sRGB components; **absent means "use the system colour"**, which keeps the default dynamic across light/dark — don't write the system colour's components into them). All have sensible defaults for fresh installs — never add a migration that breaks an upgrade.
+`BatteryThresholdPercent`, `WakeMode.<rawValue>` (one per case), `LeftClickAction`, `LastUsedSliderPosition`, `FixedClickSliderPosition`, `ScheduleEnabled`, `ScheduleBlocks` (JSON `Data`), `SuppressedUntil` (`Double`, absent = not suppressed), `BadgeSizeScale` (`Double`), `BadgeOutline` (`Bool`), `BadgeSpin` (`Bool`), `HideIconAfterPosition` (`Int`, **absent = the top stop, i.e. never hide**), `LingerPosition` (`Int`, absent = 0 = off; indexes `lingerDurations`, **not** `sliderDurations`), `IconBackdropIdle` / `IconBackdropAwake` (`String`, an `IconBackdrop` rawValue, **absent = `.none`**), `IconCutoutIdle` / `IconCutoutAwake` (`Bool`), `BadgeColorScheduled` / `BadgeColorDynamic` / `IconColorGlyphIdle` / `IconColorAwake` / `IconColorBackdropIdle` / `IconColorBackdropAwake` (`[Double]` sRGB components; **absent means "use the system colour"**, which keeps the default dynamic across light/dark — don't write the system colour's components into them). All have sensible defaults for fresh installs — never add a migration that breaks an upgrade.
 
 AppKit also persists the status item's visibility itself, as `NSStatusItem
 VisibleCC NewtStatusItem`. Newt never writes that key — `configureStatusItem()`

@@ -30,6 +30,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     /// Only on Macs that have a battery to run down.
     private var batterySlider: BatterySliderView?
     private var claimLifetimeSlider: DurationSliderView!
+    private var lingerSlider: DurationSliderView!
     private var hideIconSlider: DurationSliderView!
 
     // Schedule
@@ -84,7 +85,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private var previewSpinTimer: Timer?
     private var previewAngle: Double = 0
 
-    private static let contentSize = NSSize(width: 600, height: 560)
+    // Tall enough for General, which is the longest tab: four sliders and their
+    // hints. The tab bar and the 12pt inset come off this before the tab's own
+    // fixed-height layout gets a look in, so it needs headroom over that height.
+    private static let contentSize = NSSize(width: 600, height: 720)
 
     init(sleep: SleepManager, login: LoginItemController, updater: SPUUpdaterProviding) {
         self.sleep = sleep
@@ -161,6 +165,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         claimLifetimeSlider.refresh(
             position: sleep.dynamicClaimMaxPosition,
             displayText: SleepManager.displayString(forSliderPosition: sleep.dynamicClaimMaxPosition),
+            enabled: true)
+        lingerSlider.refresh(
+            position: sleep.lingerPosition,
+            displayText: SleepManager.lingerDisplayString(forSliderPosition: sleep.lingerPosition),
             enabled: true)
         hideIconSlider.refresh(
             position: sleep.hideIconAfterPosition,
@@ -282,9 +290,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     // MARK: - General
 
     private func generalView() -> NSView {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 446))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 640))
         let sliderHeight = 44.0, gapBeforeHint = 6.0, gapAfterHint = 20.0
-        var top = 424.0
+        var top = 618.0
 
         for box in [loginBox, resumeBox, autoUpdateBox] {
             box.target = self
@@ -333,6 +341,27 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
                       + "a state we don't model, or just sitting waiting for an answer — Newt lets "
                       + "go after this long, so a runaway can't flatten your battery. "
                       + "Off means no limit.",
+                      to: view, top: top) - gapAfterHint
+
+        lingerSlider = DurationSliderView(
+            title: "Linger",
+            // Its own ladder — 5m…12h, bunched low — not the Keep awake one.
+            maxPosition: SleepManager.lingerDurations.count - 1,
+            initialPosition: sleep.lingerPosition,
+            initialText: SleepManager.lingerDisplayString(forSliderPosition: sleep.lingerPosition),
+            textForPosition: { SleepManager.lingerDisplayString(forSliderPosition: $0) }
+        ) { [weak self] position in
+            self?.sleep.lingerPosition = position
+            self?.refresh()
+        }
+        lingerSlider.frame.origin = NSPoint(x: 20, y: top - sliderHeight)
+        view.addSubview(lingerSlider)
+        top -= sliderHeight + gapBeforeHint
+
+        top = addHint("When a dynamic claim is released, Newt keeps holding on for this long "
+                      + "before letting go, and each new release starts the clock again. That "
+                      + "keeps a working day awake without a schedule. Off means Newt lets go "
+                      + "as soon as the claim does.",
                       to: view, top: top) - gapAfterHint
 
         hideIconSlider = DurationSliderView(

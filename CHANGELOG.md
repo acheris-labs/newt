@@ -11,6 +11,19 @@ auto-update prompt.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-13
+
+### Added
+
+- **Linger** (*Settings ▸ General*). When a dynamic claim is released, by an AI
+  agent finishing a turn or by anything else using `newt://claim`, Newt now keeps
+  holding your Mac awake for a spell instead of letting go straight away, and
+  each new release starts the clock again. Work through the day and your Mac
+  stays awake all day without setting a schedule or guessing at a duration; walk
+  away, and it sleeps once the last one runs out. Anything from 5 minutes to 12
+  hours. The lingering claim shows up under **Claims**, where a click releases it
+  early. Off by default.
+
 ## [0.8.1] - 2026-08-31
 
 ### Added
@@ -456,7 +469,8 @@ Initial public release.
   `SMAppService.daemon(plistName:)`.
 - Lizard menu bar icon (filled when engaged, outline when idle).
 
-[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/acheris-labs/newt/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/acheris-labs/newt/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/acheris-labs/newt/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/acheris-labs/newt/compare/v0.7.0...v0.7.1

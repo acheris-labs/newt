@@ -77,11 +77,10 @@ Each is one line, and each is why this isn't quite a five-minute change:
    per agent turn.
 2. **`shutdown()` clears it.** It is documented as the only thing that releases
    unconditionally.
-3. **No "indefinite" stop**, and clamp to `sliderDurations.count - 2`. Position
-   15's value is `-1`, which `lingerSeconds` reads as "no duration" — so a
-   hand-written `LingerPosition` of 15 would look set and do nothing. An
-   indefinite linger would also mean the Mac never sleeps again after the first
-   agent turn.
+3. **No "indefinite" stop.** `lingerDurations` carries no sentinel at all, so
+   there is nothing to clamp away and no stored position can reach one. An
+   indefinite linger would mean the Mac never sleeps again after the first agent
+   turn — the exact thing this feature exists to avoid.
 4. **Setting the slider to 0 calls `releaseLinger()`**, not just
    `lingerUntil = nil` — copying `hideIconAfterPosition`'s `didSet`, which only
    calls `onChange?()`, would clear the field but leave the assertions up.
@@ -99,10 +98,19 @@ absent means 0 means off, so an upgrade changes nothing. It must be added to
 `SettingsWindowController.refresh()` with the other sliders or it will visibly
 desync; that method runs at 1 Hz while the menu is open.
 
-`DurationSliderView` gains `maxPosition:`, defaulting to today's value. Note
-`maxValue` and `numberOfTickMarks` are *different* expressions — `count - 1` and
-`count` — so the parameter must set `maxPosition` and `maxPosition + 1`
-respectively, or the thumb snaps to positions the caller never asked for.
+**Its own ladder.** A linger fills the gaps between agent turns, so its useful
+range is minutes to a few hours, not the Keep awake slider's 30m…24h. It walks a
+separate `lingerDurations` table — `off, 5m, 10m, 15m, 20m, 30m, 45m, 1h, 1h30,
+2h, 3h, 4h, 6h, 8h, 12h` — deliberately bunched at the bottom, where the choice
+actually matters. It gets its own `lingerDisplayString(forSliderPosition:)` to
+match; labelling one table's stops with the other table's function is the
+mistake to watch for, and the compiler cannot catch it.
+
+`DurationSliderView` gains `maxPosition:`, defaulting to today's value, so a
+control can size itself to its own table. Note `maxValue` and
+`numberOfTickMarks` are *different* expressions — `count - 1` and `count` — so
+the parameter must set `maxPosition` and `maxPosition + 1` respectively, or the
+thumb snaps to positions the caller never asked for.
 
 ### Badge
 
