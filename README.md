@@ -78,7 +78,9 @@ Click the menu bar icon.
   out when that's nothing. The Keep awake slider and the schedule are listed but
   greyed, since you turn those off with their own controls; claims raised by AI
   agents — *dynamic claims* — can be inspected and revoked here (see
-  [below](#keeping-the-mac-awake-while-an-ai-agent-works)).
+  [below](#keeping-the-mac-awake-while-an-ai-agent-works)). If **Linger** is
+  switched on, the time still to run after a claim was released appears here
+  too; click it to let go early.
 - **Settings…** (⌘,) — everything you set once and forget. See
   [Settings](#settings).
 - **Check for Updates…** — Newt updates itself.
@@ -107,6 +109,13 @@ the order they appear.
   of it, whatever the agent says. A backstop: agents normally release their own
   claims, and Newt drops one whose process dies, but neither helps if the agent
   is alive and simply never releases. Off means no limit.
+- **Linger** — when a dynamic claim is released, keep holding your Mac awake for
+  this long before letting go, and start the clock again each time another one
+  is released. Anything from 5 minutes to 12 hours, with the short end finely
+  spaced since that's where the choice matters. It's what keeps a working day
+  awake without a schedule: you're never more than this long past the last thing
+  that claimed. Walk away and the last one runs out on its own. Off by default,
+  in which case a claim ends the moment its work does.
 - **Hide icon** — once nothing has held your Mac awake for this long, Newt takes
   its icon out of the menu bar and gets out of your way. Open Newt again from
   `/Applications` or Spotlight to bring it back; anything that starts holding
@@ -241,11 +250,21 @@ doesn't start claiming, restart it.
 
 From then on, Newt holds your Mac awake for as long as the agent is actually
 working, and lets go when it finishes. An agent session left sitting idle at the
-prompt holds nothing, so your Mac still sleeps when you walk away.
+prompt holds nothing of its own, so out of the box your Mac still sleeps when you
+walk away.
 
-This is a third way of holding the Mac awake, independent of the Keep awake
-slider and the schedule — any one of them is enough. **Suppress all claims** and
-the low battery cutoff still override all three.
+That can be too abrupt if you work in bursts, with your Mac starting to nod off
+in the gaps while you read a diff and think about what to ask next. **Linger**,
+in *Settings ▸ General*, keeps Newt holding on for a set spell after a claim is
+released, and each new release starts that clock again. A working day then stays
+awake without you setting a schedule or guessing at a duration, and when you do
+walk away the last spell runs out on its own. It works for any dynamic claim,
+not just an agent's. It's off unless you turn it on.
+
+Dynamic claims, and the lingering spell they leave behind, hold your Mac awake
+independently of the Keep awake slider and the schedule. Any one of them is
+enough. **Suppress all claims** and the low battery cutoff still override every
+one of them.
 
 ### When something gets stuck
 
