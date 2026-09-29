@@ -143,7 +143,6 @@ final class SleepManager {
     private var preventSystemAssertion: IOPMAssertionID = 0
     private var assertionsActive = false
     private var expiryTimer: Timer?
-    private var displayWindowTimer: Timer?
     private var boundaryTimer: Timer?
     private var isReconciling = false
     private var systemObservers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
@@ -570,15 +569,9 @@ final class SleepManager {
         // Every poll, so the veto lifts again once the charge or the power
         // source recovers — the claims themselves are never torn down.
         battery.onEvaluate = { [weak self] in self?.reconcile(notify: false) }
-        // Plug/unplug while engaged: suspend or resume the display assertion if
-        // "pause on battery" is on. Other mechanisms are untouched.
-        // Reconcile first: plugging back in can lift the battery veto and
-        // rebuild the assertions, and only then is there a display assertion
-        // for `reevaluateDisplay` to adjust.
-        battery.onPowerChange = { [weak self] in
-            self?.reconcile()
-            self?.reevaluateDisplay()
-        }
+        // Plug/unplug can lift the battery veto, and flips the display
+        // assertion when "pause on battery" is on.
+        battery.onPowerChange = { [weak self] in self?.reconcile() }
         // Load mode toggles. If a key is missing (first run / upgrade), the
         // mode defaults to on.
         let defaults = UserDefaults.standard
@@ -723,10 +716,7 @@ final class SleepManager {
 
         if isActive {
             switch mode {
-            case .display:    applyAssertion(mode, on: displayWanted(),
-                                             id: &displayAssertion,
-                                             type: kIOPMAssertionTypePreventUserIdleDisplaySleep)
-                              scheduleDisplayWindowTimer()
+            case .display:    break  // reconcile() below syncs it
             case .systemIdle: applyAssertion(mode, on: enabled, id: &systemAssertion,
                                              type: kIOPMAssertionTypePreventUserIdleSystemSleep)
             case .system:     applyAssertion(mode, on: enabled, id: &preventSystemAssertion,
@@ -918,11 +908,11 @@ final class SleepManager {
             releaseAssertions()
             helper.setDisableSleep(false) { _, _ in }
         }
+        let displayChanged = syncDisplayAssertion()
 
         scheduleExpiry()
-        scheduleDisplayWindowTimer()
         scheduleBoundaryTimer()
-        if notify || assertionsActive != wasActive { onChange?() }
+        if notify || displayChanged || assertionsActive != wasActive { onChange?() }
     }
 
     /// The battery has to stay watched whenever a claim exists, not just while
@@ -947,12 +937,15 @@ final class SleepManager {
         lingerUntil = nil
     }
 
-    /// Wake at the next moment the answer could change: a schedule edge, or the
-    /// suppression expiring.
+    /// Wake at the next moment the answer could change: a schedule edge, a
+    /// display-window edge, or the suppression expiring.
     private func scheduleBoundaryTimer() {
         var fire: Date?
         if scheduleEnabled, let next = schedule.nextBoundary(after: Date()) {
             fire = next
+        }
+        if assertionsActive, let edge = nextDisplayWindowEdge(after: Date()) {
+            fire = min(fire ?? edge, edge)
         }
         if let until = suppressedUntil, until < .distantFuture {
             fire = min(fire ?? until, until)
@@ -1114,8 +1107,6 @@ final class SleepManager {
         lingerUntil = nil
         expiryTimer?.invalidate()
         expiryTimer = nil
-        displayWindowTimer?.invalidate()
-        displayWindowTimer = nil
         boundaryTimer?.invalidate()
         boundaryTimer = nil
         battery.disable()
@@ -1170,32 +1161,33 @@ final class SleepManager {
         !(displayWindowStart == 0 && displayWindowEnd == 48)
     }
 
-    /// Add/drop the display assertion as its conditions change — the clock
-    /// crossing the window edges, or a plug/unplug when "pause on battery" is on.
-    private func reevaluateDisplay() {
-        guard assertionsActive else { return }
+    /// Bring the display assertion in line with `displayWanted()` while
+    /// engaged. Returns true when it was added or dropped.
+    private func syncDisplayAssertion() -> Bool {
+        guard assertionsActive else { return false }
         let want = displayWanted()
-        guard want != (displayAssertion != 0) else { return }
+        guard want != (displayAssertion != 0) else { return false }
         applyAssertion(.display, on: want, id: &displayAssertion,
                        type: kIOPMAssertionTypePreventUserIdleDisplaySleep)
-        onChange?()
+        return true
     }
 
-    /// Poll once a minute while engaged with a restricted window, flipping the
-    /// display assertion at the boundaries (mirrors BatteryMonitor's poll shape).
-    private func scheduleDisplayWindowTimer() {
-        displayWindowTimer?.invalidate()
-        displayWindowTimer = nil
-        guard isActive, enabledModes.contains(.display), displayWindowRestricted else { return }
-        let t = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
-            self?.reevaluateDisplay()
-        }
-        RunLoop.main.add(t, forMode: .common)
-        displayWindowTimer = t
+    /// The next time the clock crosses into or out of the display-on window,
+    /// or nil when the window restricts nothing.
+    private func nextDisplayWindowEdge(after date: Date) -> Date? {
+        guard enabledModes.contains(.display), displayWindowRestricted else { return nil }
+        return [displayWindowStart, displayWindowEnd]
+            .map { ($0 * 30) % (24 * 60) }
+            .compactMap {
+                Calendar.current.nextDate(after: date,
+                                          matching: DateComponents(hour: $0 / 60, minute: $0 % 60),
+                                          matchingPolicy: .nextTime)
+            }
+            .min()
     }
 
     /// Set the display-on window (half-hour indices, end > start). Persists; if
-    /// engaged, re-evaluates the display assertion now and re-arms the timer.
+    /// engaged, re-evaluates the display assertion now.
     func setDisplayWindow(start: Int, end: Int) {
         let s = max(0, min(47, start))
         let e = max(s + 1, min(48, end))
@@ -1204,11 +1196,7 @@ final class SleepManager {
         displayWindowEnd = e
         UserDefaults.standard.set(s, forKey: "DisplayWindowStart")
         UserDefaults.standard.set(e, forKey: "DisplayWindowEnd")
-        if isActive {
-            reevaluateDisplay()
-            scheduleDisplayWindowTimer()
-        }
-        onChange?()
+        reconcile()
     }
 
     /// Toggle "pause display on battery". Persists; if engaged, re-evaluates the
@@ -1217,8 +1205,7 @@ final class SleepManager {
         guard on != pauseDisplayOnBattery else { return }
         pauseDisplayOnBattery = on
         UserDefaults.standard.set(on, forKey: "PauseDisplayOnBattery")
-        if isActive { reevaluateDisplay() }
-        onChange?()
+        reconcile()
     }
 
     /// Toggle "resume last state at launch". Persists.

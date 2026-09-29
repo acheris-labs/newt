@@ -11,6 +11,14 @@ auto-update prompt.
 
 ## [Unreleased]
 
+### Fixed
+
+- The hours set for **Keep display on** are now honoured while Newt is holding
+  your Mac awake. If a hold started inside those hours and ran past them, for
+  example on a schedule or during a long agent session, the display was kept on
+  until the hold ended instead of being allowed to sleep at the end of the
+  window. This was most likely with a low battery floor set.
+
 ## [0.9.1] - 2026-09-13
 
 ### Fixed
