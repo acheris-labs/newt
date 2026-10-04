@@ -200,8 +200,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         schedulePauseBox.state = sleep.pauseScheduleOnBattery ? .on : .off
         scheduleWakeBox.state = sleep.wakeAtScheduleStart ? .on : .off
         scheduleWakeBatteryBox.state = sleep.wakeAtScheduleStartOnBattery ? .on : .off
+        schedulePauseBox.isEnabled = sleep.scheduleEnabled
+        scheduleWakeBox.isEnabled = sleep.scheduleEnabled
         // A paused schedule would only be woken for to sleep straight away.
-        scheduleWakeBatteryBox.isEnabled = sleep.wakeAtScheduleStart && !sleep.pauseScheduleOnBattery
+        scheduleWakeBatteryBox.isEnabled = sleep.scheduleEnabled && sleep.wakeAtScheduleStart
+            && !sleep.pauseScheduleOnBattery
         grid.refresh(schedule: sleep.schedule, enabled: sleep.scheduleEnabled)
 
         for (action, button) in leftClickButtons {

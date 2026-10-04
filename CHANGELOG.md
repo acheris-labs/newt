@@ -11,6 +11,12 @@ auto-update prompt.
 
 ## [Unreleased]
 
+### Fixed
+
+- In Settings ▸ Schedule, the battery and wake options are now greyed out while
+  **Follow this schedule** is off, since they have no effect then. Your choices
+  are kept for when you turn the schedule back on.
+
 ## [0.10.0] - 2026-10-04
 
 ### Added

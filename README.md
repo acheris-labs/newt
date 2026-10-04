@@ -199,6 +199,9 @@ bars.
   out while the schedule is paused on battery, since the Mac would only wake to
   go straight back to sleep.
 
+These three only matter while **Follow this schedule** is on, so they're greyed
+out when it's off. Your choices are kept for when you turn it back on.
+
 Changes save as you make them; there's no Save button. Overlapping bars on the
 same day merge into one.
 
