@@ -11,6 +11,8 @@ auto-update prompt.
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-10-04
+
 ### Fixed
 
 - In Settings ▸ Schedule, the battery and wake options are now greyed out while
@@ -507,7 +509,8 @@ Initial public release.
   `SMAppService.daemon(plistName:)`.
 - Lizard menu bar icon (filled when engaged, outline when idle).
 
-[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/acheris-labs/newt/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/acheris-labs/newt/compare/v0.9.2...v0.10.0
 [0.9.2]: https://github.com/acheris-labs/newt/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/acheris-labs/newt/compare/v0.9.0...v0.9.1
