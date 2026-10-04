@@ -65,7 +65,8 @@ Click the menu bar icon.
 - **Use schedule** — hold your Mac awake on a repeating weekly timetable, say
   Mon–Fri 08:00–20:00 and never at weekends. Tick this to switch the timetable
   on. The item itself tells you what the schedule is doing — *awake until 20:00*,
-  *next Mon 08:00*, *suppressed until 20:00*, or *no hours set*. You set the
+  *next Mon 08:00*, *suppressed until 20:00*, *paused on battery*, or *no hours
+  set*. You set the
   hours themselves in *Settings ▸ Schedule*.
 - **Suppress all claims** — "not right now". While it's ticked, nothing keeps
   your Mac awake: not the schedule, not the Keep awake slider, not a dynamic claim.
@@ -155,7 +156,8 @@ how Newt has always looked; *Use Automatic Colours* puts every colour back, and
 each one also has its own *Automatic* button. The preview sits on your actual
 desktop picture, so you can see whether a choice survives your own wallpaper.
 
-**Schedule** — *Follow this schedule* plus the weekly grid. See
+**Schedule** — *Follow this schedule*, pausing it on battery, waking the Mac
+when a block starts, and the weekly grid. See
 [Setting a schedule](#setting-a-schedule).
 
 **Left Click** — what clicking the menu bar icon does: open the menu, toggle the
@@ -184,6 +186,18 @@ bars.
   it and choose Delete.
 - **Follow this schedule** at the top is the same switch as **Use schedule** in
   the menu.
+- **Pause the schedule on battery** — while your Mac is unplugged, the schedule
+  doesn't hold it awake. Plug back in and it picks up where the hours say it
+  should. Only shown on Macs with a battery.
+- **Wake the Mac when a block starts** — if your Mac is asleep when a block
+  begins, Newt wakes it, so a 07:00 block starts at 07:00 rather than whenever
+  you next open the lid. It wakes a sleeping Mac only; one that's shut down
+  stays off. It needs Newt's helper, the same as keeping the Mac awake with the
+  lid closed. To see the wake Newt has set, run `pmset -g sched`.
+- **Even when on battery** — without this, Newt only wakes your Mac when it's
+  plugged in, and not at all once the battery is at or below its cutoff. Greyed
+  out while the schedule is paused on battery, since the Mac would only wake to
+  go straight back to sleep.
 
 Changes save as you make them; there's no Save button. Overlapping bars on the
 same day merge into one.

@@ -11,6 +11,16 @@ auto-update prompt.
 
 ## [Unreleased]
 
+### Added
+
+- **Wake the Mac when a block starts** (Settings ▸ Schedule). If your Mac is
+  asleep when a scheduled block begins, Newt wakes it, so a 07:00 block starts
+  at 07:00. By default it only wakes when plugged in; tick **Even when on
+  battery** to wake on battery too. It wakes a sleeping Mac, not one that's
+  shut down.
+- **Pause the schedule on battery** (Settings ▸ Schedule). While unplugged, the
+  schedule doesn't hold your Mac awake.
+
 ## [0.9.2] - 2026-09-29
 
 ### Fixed

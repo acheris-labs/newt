@@ -1,4 +1,5 @@
 import Foundation
+import IOKit.pwr_mgt
 
 /// Accepts incoming XPC connections from the Newt app and wires each one to a
 /// fresh `HelperService`. Exits once the last one closes, so this daemon never
@@ -52,6 +53,11 @@ final class HelperListenerDelegate: NSObject, NSXPCListenerDelegate {
 final class HelperService: NSObject, HelperProtocol {
     private var sleepDisabled = false
 
+    /// Which connection's service set the pending wake. Process-wide, because
+    /// a replaced connection dropping late mustn't cancel its successor's wake.
+    private static var wakeHolder: ObjectIdentifier?
+    private static let wakeLock = NSLock()
+
     func setDisableSleep(_ enabled: Bool, reply: @escaping (Bool, String?) -> Void) {
         if let err = Self.runPmset(disable: enabled) {
             reply(false, err)
@@ -61,15 +67,58 @@ final class HelperService: NSObject, HelperProtocol {
         }
     }
 
+    func setScheduledWake(_ date: Date?, reply: @escaping (Bool, String?) -> Void) {
+        Self.wakeLock.lock()
+        defer { Self.wakeLock.unlock() }
+        Self.cancelScheduledWakes()
+        Self.wakeHolder = nil
+        guard let date else {
+            reply(true, nil)
+            return
+        }
+        let result = IOPMSchedulePowerEvent(date as CFDate, Self.wakeOwner,
+                                            kIOPMAutoWake as CFString)
+        guard result == kIOReturnSuccess else {
+            reply(false, "Could not schedule a wake (IOKit error \(String(format: "0x%08x", result)))")
+            return
+        }
+        Self.wakeHolder = ObjectIdentifier(self)
+        reply(true, nil)
+    }
+
     func getVersion(reply: @escaping (String) -> Void) {
         reply(HelperConstants.version)
     }
 
     /// Invoked when the app's connection drops. Undo any lingering change.
     func connectionDropped() {
+        // Nothing holds the Mac awake once it's up, so a wake outliving the app
+        // would only wake it to sleep again.
+        Self.wakeLock.lock()
+        if Self.wakeHolder == ObjectIdentifier(self) {
+            Self.cancelScheduledWakes()
+            Self.wakeHolder = nil
+        }
+        Self.wakeLock.unlock()
         guard sleepDisabled else { return }
         _ = Self.runPmset(disable: false)
         sleepDisabled = false
+    }
+
+    /// Scheduled power events are kept by powerd, not this process, so they
+    /// survive the helper exiting and are found again by owner.
+    private static let wakeOwner = HelperConstants.appIdentifier as CFString
+
+    private static func cancelScheduledWakes() {
+        guard let events = IOPMCopyScheduledPowerEvents()?.takeRetainedValue()
+                as? [[String: Any]] else { return }
+        for event in events {
+            guard event[kIOPMPowerEventAppNameKey] as? String == HelperConstants.appIdentifier,
+                  event[kIOPMPowerEventTypeKey] as? String == kIOPMAutoWake,
+                  let time = event[kIOPMPowerEventTimeKey] as? Date
+            else { continue }
+            IOPMCancelScheduledPowerEvent(time as CFDate, wakeOwner, kIOPMAutoWake as CFString)
+        }
     }
 
     /// Runs `pmset -a disablesleep 0|1`. Returns nil on success, else a message.

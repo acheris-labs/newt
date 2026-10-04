@@ -36,6 +36,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     // Schedule
     private let scheduleBox = NSButton(checkboxWithTitle: "Follow this schedule",
                                        target: nil, action: nil)
+    private let schedulePauseBox = NSButton(checkboxWithTitle: "Pause the schedule on battery",
+                                            target: nil, action: nil)
+    private let scheduleWakeBox = NSButton(checkboxWithTitle: "Wake the Mac when a block starts",
+                                           target: nil, action: nil)
+    private let scheduleWakeBatteryBox = NSButton(checkboxWithTitle: "Even when on battery",
+                                                  target: nil, action: nil)
     private let grid: ScheduleGridView
 
     // Wake modes
@@ -191,6 +197,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         }
 
         scheduleBox.state = sleep.scheduleEnabled ? .on : .off
+        schedulePauseBox.state = sleep.pauseScheduleOnBattery ? .on : .off
+        scheduleWakeBox.state = sleep.wakeAtScheduleStart ? .on : .off
+        scheduleWakeBatteryBox.state = sleep.wakeAtScheduleStartOnBattery ? .on : .off
+        // A paused schedule would only be woken for to sleep straight away.
+        scheduleWakeBatteryBox.isEnabled = sleep.wakeAtScheduleStart && !sleep.pauseScheduleOnBattery
         grid.refresh(schedule: sleep.schedule, enabled: sleep.scheduleEnabled)
 
         for (action, button) in leftClickButtons {
@@ -507,25 +518,46 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     // MARK: - Schedule
 
     private func scheduleView() -> NSView {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 326))
-        scheduleBox.target = self
-        scheduleBox.action = #selector(scheduleToggled)
-        scheduleBox.frame = NSRect(x: 20, y: 274, width: 300, height: 20)
-        view.addSubview(scheduleBox)
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 440))
+        var rows: [(box: NSButton, indent: CGFloat)] = [(scheduleBox, 0)]
+        // Desktops are never on battery, so these would only be noise.
+        if sleep.hasBattery { rows.append((schedulePauseBox, 0)) }
+        rows.append((scheduleWakeBox, 0))
+        if sleep.hasBattery { rows.append((scheduleWakeBatteryBox, 18)) }
 
-        grid.frame = NSRect(x: 20, y: 30, width: grid.frame.width, height: grid.frame.height)
+        var y = 388.0
+        for row in rows {
+            row.box.target = self
+            row.box.action = #selector(scheduleToggled(_:))
+            row.box.frame = NSRect(x: 20 + row.indent, y: y, width: 400, height: 20)
+            view.addSubview(row.box)
+            y -= 26
+        }
+
+        let gridTop = y + 12
+        grid.frame = NSRect(x: 20, y: gridTop - grid.frame.height,
+                            width: grid.frame.width, height: grid.frame.height)
         grid.onChange = { [weak self] schedule in self?.sleep.setSchedule(schedule) }
         view.addSubview(grid)
 
-        addHint("Drag on a row to add hours; drag a block or its edges to adjust. "
-                + "Drag a block's right edge into the row below to run it overnight. "
-                + "Select a block and press Delete to remove it.",
-                to: view, top: 34)
+        let hintTop = addHint("Drag on a row to add hours; drag a block or its edges to adjust. "
+                              + "Drag a block's right edge into the row below to run it overnight. "
+                              + "Select a block and press Delete to remove it.",
+                              to: view, top: grid.frame.minY - 4)
+        addHint("Waking works from sleep, not from shut down.", to: view, top: hintTop - 6)
         return view
     }
 
-    @objc private func scheduleToggled() {
-        sleep.setScheduleEnabled(scheduleBox.state == .on)
+    @objc private func scheduleToggled(_ sender: NSButton) {
+        let on = sender.state == .on
+        switch sender {
+        case scheduleBox:            sleep.setScheduleEnabled(on)
+        case schedulePauseBox:       sleep.setPauseScheduleOnBattery(on)
+        case scheduleWakeBox:        sleep.setWakeAtScheduleStart(on)
+        case scheduleWakeBatteryBox: sleep.setWakeAtScheduleStartOnBattery(on)
+        default:                     return
+        }
+        refresh()
     }
 
     // MARK: - Left click

@@ -40,12 +40,13 @@ Two binaries inside one `.app` bundle, plus a small shared protocol.
   - `.pluginFile` (opencode) writes `Newt/Resources/newt-opencode.js` to `~/.config/opencode/plugin/`, a file Newt owns outright — so no merge, no backup, and uninstall is a delete. It refuses to overwrite or delete a file at that path without our marker. opencode has **no** hook that fires when a turn starts (its only shell hooks are `experimental.hook.file_edited` and `session_completed`), so a plugin is the sole way to raise a claim; it globs `{plugin,plugins}/*.{ts,js}` in its config dirs at startup, and `opencode.json` is never read. A path-loaded plugin **must** export `id` as well as `server` or it fails to load — the published types mark `id` optional because npm plugins take theirs from `package.json`, and the failure is only a log line. The plugin claims on `session.status` → `busy` and releases on `idle`; `retry` holds, since that's a stalled request still working. `refreshInstalledPlugins()` rewrites a stale plugin at launch, since a Newt upgrade otherwise leaves the old file in place.
 - `SettingsWindowController.swift` is the app's only `NSWindow`: an `NSTabView` of General / Wake Modes / Icon / Schedule / Left Click / Integrations. Every control writes straight through to `SleepManager` on change — no OK or Apply. `SPUUpdaterProviding` is a one-property protocol so this file doesn't import Sparkle and can be exercised in a harness with a stub.
 - `ScheduleGridView.swift` is the custom weekly grid (drag to add/move/resize, overnight wrap). It's hosted by the Schedule tab, but knows nothing about it — it just reports a `WeeklySchedule` through `onChange`.
-- `HelperClient.swift` registers the daemon via `SMAppService.daemon(plistName:)` and brokers XPC calls (`setDisableSleep`) over an `NSXPCConnection` with identifier-pinned code requirements on both ends.
+- `HelperClient.swift` registers the daemon via `SMAppService.daemon(plistName:)` and brokers XPC calls (`setDisableSleep`, `setScheduledWake`) over an `NSXPCConnection` with identifier-pinned code requirements on both ends.
 - `BatteryMonitor.swift` polls `IOPSCopyPowerSourcesInfo` every 15s while engaged; trips disengage when on battery and percent ≤ user-configured threshold.
 - `LoginItemController.swift` uses `SMAppService.mainApp` for auto-launch.
 
 **`NewtHelper/`** — the privileged launchd daemon (separate binary in the same bundle).
 - `HelperService.swift` runs `/usr/bin/pmset -a disablesleep 0|1` as root. Critical safety property: if the XPC connection from Newt drops while sleep is disabled, the helper restores `disablesleep 0` automatically on disconnect. Never disable that behavior.
+  It also holds Newt's one scheduled wake (`IOPMSchedulePowerEvent`, owner `net.acheris.newt`), and cancels it on the same disconnect — but only if the dropping connection is the one that set it, since a replaced connection can drop after its successor has re-armed. Scheduling a power event refuses non-root callers (`kIOReturnNotPrivileged`), which is why it lives here.
 - `net.acheris.newt.helper.plist` is the launchd manifest at the bundle root, embedded into `Contents/Library/LaunchDaemons/` by `make build`.
 
 **`Shared/HelperProtocol.swift`** — the XPC interface contract. Any change to the protocol must be released to both binaries in the same version; mismatch would break the connection on upgrade.
@@ -137,6 +138,15 @@ gated on `.circle` because it's the only backdrop opaque enough to cut out of.
 A backdrop enlarges the canvas, so the claim and caution badges size themselves
 from the *glyph* height, not `rect.height`, or they'd inflate with it.
 
+**Schedule and battery.** `PauseScheduleOnBattery` is folded into
+`scheduleClaimEnd` itself, so a paused schedule is *no claim*, not a veto —
+everything downstream (`hasAnyClaim`, idle hide, suppression, the menu) follows
+without knowing. `syncScheduledWake()` runs in `reconcile()` and only calls the
+helper when the target changes. `heldWake` is recorded when *sent*, so a helper
+that fails isn't retried on every poll (each call can open System Settings);
+it is reset on helper disconnect only once the helper has *confirmed* it,
+otherwise a helper that never answers would reconnect in a loop.
+
 The schedule's `boundaryTimer` is a one-shot armed at the next edge, not a
 poll. Wall-clock jumps it can't see — sleep/wake, clock set, time zone — are
 covered by three notification observers that just call `reconcile()`.
@@ -147,7 +157,7 @@ covered by three notification observers that just call `reconcile()`.
 
 ### UserDefaults keys (all in standard defaults)
 
-`BatteryThresholdPercent`, `WakeMode.<rawValue>` (one per case), `LeftClickAction`, `LastUsedSliderPosition`, `FixedClickSliderPosition`, `ScheduleEnabled`, `ScheduleBlocks` (JSON `Data`), `SuppressedUntil` (`Double`, absent = not suppressed), `BadgeSizeScale` (`Double`), `BadgeOutline` (`Bool`), `BadgeSpin` (`Bool`), `HideIconAfterPosition` (`Int`, **absent = the top stop, i.e. never hide**), `LingerPosition` (`Int`, absent = 0 = off; indexes `lingerDurations`, **not** `sliderDurations`), `IconBackdropIdle` / `IconBackdropAwake` (`String`, an `IconBackdrop` rawValue, **absent = `.none`**), `IconCutoutIdle` / `IconCutoutAwake` (`Bool`), `BadgeColorScheduled` / `BadgeColorDynamic` / `IconColorGlyphIdle` / `IconColorAwake` / `IconColorBackdropIdle` / `IconColorBackdropAwake` (`[Double]` sRGB components; **absent means "use the system colour"**, which keeps the default dynamic across light/dark — don't write the system colour's components into them). All have sensible defaults for fresh installs — never add a migration that breaks an upgrade.
+`BatteryThresholdPercent`, `WakeMode.<rawValue>` (one per case), `LeftClickAction`, `LastUsedSliderPosition`, `FixedClickSliderPosition`, `ScheduleEnabled`, `ScheduleBlocks` (JSON `Data`), `PauseScheduleOnBattery` / `WakeAtScheduleStart` / `WakeAtScheduleStartOnBattery` (`Bool`, absent = off), `SuppressedUntil` (`Double`, absent = not suppressed), `BadgeSizeScale` (`Double`), `BadgeOutline` (`Bool`), `BadgeSpin` (`Bool`), `HideIconAfterPosition` (`Int`, **absent = the top stop, i.e. never hide**), `LingerPosition` (`Int`, absent = 0 = off; indexes `lingerDurations`, **not** `sliderDurations`), `IconBackdropIdle` / `IconBackdropAwake` (`String`, an `IconBackdrop` rawValue, **absent = `.none`**), `IconCutoutIdle` / `IconCutoutAwake` (`Bool`), `BadgeColorScheduled` / `BadgeColorDynamic` / `IconColorGlyphIdle` / `IconColorAwake` / `IconColorBackdropIdle` / `IconColorBackdropAwake` (`[Double]` sRGB components; **absent means "use the system colour"**, which keeps the default dynamic across light/dark — don't write the system colour's components into them). All have sensible defaults for fresh installs — never add a migration that breaks an upgrade.
 
 AppKit also persists the status item's visibility itself, as `NSStatusItem
 VisibleCC NewtStatusItem`. Newt never writes that key — `configureStatusItem()`

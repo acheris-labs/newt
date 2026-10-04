@@ -127,6 +127,22 @@ final class HelperClient {
     /// queue. If the helper is not yet approved, idle-sleep assertions still
     /// apply but `reply` reports the message so the menu can show it.
     func setDisableSleep(_ enabled: Bool, reply: @escaping (Bool, String?) -> Void) {
+        call(reply: reply) { $0.setDisableSleep(enabled, reply: $1) }
+    }
+
+    /// Arm Newt's one scheduled wake at `date`, or clear it when nil. `reply`
+    /// runs on the main queue. The helper clears the wake itself if this
+    /// connection drops — see `onDisconnect`.
+    func setScheduledWake(_ date: Date?, reply: @escaping (Bool, String?) -> Void) {
+        call(reply: reply) { $0.setScheduledWake(date, reply: $1) }
+    }
+
+    /// Fired on the main queue when the helper connection is lost, which also
+    /// costs any wake it was holding for us.
+    var onDisconnect: (() -> Void)?
+
+    private func call(reply: @escaping (Bool, String?) -> Void,
+                      _ body: (HelperProtocol, @escaping (Bool, String?) -> Void) -> Void) {
         if let message = ensureRegistered() {
             reply(false, message)
             return
@@ -144,7 +160,7 @@ final class HelperClient {
             reply(false, "Could not reach the helper.")
             return
         }
-        proxy.setDisableSleep(enabled) { ok, err in
+        body(proxy) { ok, err in
             DispatchQueue.main.async { reply(ok, err) }
         }
     }
@@ -190,12 +206,14 @@ final class HelperClient {
         // `HelperConstants.peerRequirement`.
         c.setCodeSigningRequirement(
             HelperConstants.peerRequirement(identifier: HelperConstants.helperIdentifier))
-        c.invalidationHandler = { [weak self] in
-            DispatchQueue.main.async { self?.connection = nil }
+        let dropped = { [weak self] in
+            DispatchQueue.main.async {
+                self?.connection = nil
+                self?.onDisconnect?()
+            }
         }
-        c.interruptionHandler = { [weak self] in
-            DispatchQueue.main.async { self?.connection = nil }
-        }
+        c.invalidationHandler = dropped
+        c.interruptionHandler = dropped
         c.resume()
         connection = c
         return c

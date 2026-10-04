@@ -531,6 +531,22 @@ final class SleepManager {
     /// The weekly awake windows. Only consulted when `scheduleEnabled`.
     private(set) var schedule = WeeklySchedule.workweek
 
+    /// While unplugged, the schedule raises no claim at all.
+    private(set) var pauseScheduleOnBattery = false
+
+    /// Ask macOS to wake the Mac from sleep at the start of each block.
+    private(set) var wakeAtScheduleStart = false
+
+    /// Let `wakeAtScheduleStart` arm while unplugged too.
+    private(set) var wakeAtScheduleStartOnBattery = false
+
+    /// The wake the helper is holding for us, as far as we know. Recorded when
+    /// sent, not when confirmed, so a failing helper isn't retried every poll.
+    private var heldWake: Date?
+    /// The helper acknowledged `heldWake`. Only then is a dropped connection
+    /// worth re-arming after, or a helper that never answers would loop.
+    private var heldWakeConfirmed = false
+
     /// When set and still in the future, every claim is refused. `.distantFuture`
     /// means "until the user clears it" — see `setSuppressed(_:)`.
     private(set) var suppressedUntil: Date?
@@ -572,6 +588,11 @@ final class SleepManager {
         // Plug/unplug can lift the battery veto, and flips the display
         // assertion when "pause on battery" is on.
         battery.onPowerChange = { [weak self] in self?.reconcile() }
+        helper.onDisconnect = { [weak self] in
+            guard let self, self.heldWake != nil, self.heldWakeConfirmed else { return }
+            self.heldWake = nil
+            self.reconcile(notify: false)
+        }
         // Load mode toggles. If a key is missing (first run / upgrade), the
         // mode defaults to on.
         let defaults = UserDefaults.standard
@@ -624,6 +645,9 @@ final class SleepManager {
         // Weekly schedule. Missing keys → the workweek default, switched off.
         scheduleEnabled = defaults.object(forKey: "ScheduleEnabled") as? Bool ?? false
         schedule = WeeklySchedule.load()
+        pauseScheduleOnBattery = defaults.bool(forKey: "PauseScheduleOnBattery")
+        wakeAtScheduleStart = defaults.bool(forKey: "WakeAtScheduleStart")
+        wakeAtScheduleStartOnBattery = defaults.bool(forKey: "WakeAtScheduleStartOnBattery")
         if let stamp = defaults.object(forKey: "SuppressedUntil") as? Double {
             suppressedUntil = Date(timeIntervalSinceReferenceDate: stamp)
         }
@@ -855,8 +879,12 @@ final class SleepManager {
     /// End of the schedule block in progress, or nil when the schedule isn't
     /// asking for anything right now.
     var scheduleClaimEnd: Date? {
-        guard scheduleEnabled else { return nil }
+        guard scheduleEnabled, !isSchedulePausedForBattery else { return nil }
         return schedule.blockEnd(covering: Date())
+    }
+
+    private var isSchedulePausedForBattery: Bool {
+        pauseScheduleOnBattery && isOnBattery
     }
 
     /// True while the manual suppress veto is in force.
@@ -912,6 +940,7 @@ final class SleepManager {
 
         scheduleExpiry()
         scheduleBoundaryTimer()
+        syncScheduledWake()
         if notify || displayChanged || assertionsActive != wasActive { onChange?() }
     }
 
@@ -970,6 +999,37 @@ final class SleepManager {
         }
         RunLoop.main.add(t, forMode: .common)
         boundaryTimer = t
+    }
+
+    /// Hand the helper the next wake, only when it differs from the one it
+    /// holds — reconcile() runs on every battery poll.
+    private func syncScheduledWake() {
+        let target = scheduledWakeTarget()
+        guard target != heldWake else { return }
+        heldWake = target
+        heldWakeConfirmed = false
+        helper.setScheduledWake(target) { [weak self] ok, err in
+            guard let self else { return }
+            if ok, self.heldWake == target { self.heldWakeConfirmed = true }
+            if let err { self.onHelperMessage?(err) }
+        }
+    }
+
+    /// When the Mac should be woken for the schedule, or nil for no wake.
+    private func scheduledWakeTarget() -> Date? {
+        guard scheduleEnabled, wakeAtScheduleStart else { return nil }
+        if isOnBattery {
+            guard wakeAtScheduleStartOnBattery, !pauseScheduleOnBattery,
+                  blockedByBattery == nil else { return nil }
+        }
+        var from = Date()
+        if let until = suppressedUntil, until > from {
+            guard until < .distantFuture else { return nil }
+            // Suppressing between blocks lifts exactly at the next start, and
+            // `nextStart(after:)` is strict — so look from just before it.
+            from = until.addingTimeInterval(-1)
+        }
+        return schedule.nextStart(after: from)
     }
 
     /// nil if engagement is allowed; otherwise the (current %, configured %)
@@ -1112,6 +1172,10 @@ final class SleepManager {
         battery.disable()
         releaseAssertions()
         helper.setDisableSleep(false) { _, _ in }
+        if heldWake != nil {
+            heldWake = nil
+            helper.setScheduledWake(nil) { _, _ in }
+        }
         if p > 0 { UserDefaults.standard.set(p, forKey: "EngagedSliderPosition") }
     }
 
@@ -1225,6 +1289,27 @@ final class SleepManager {
         reconcile()
     }
 
+    func setPauseScheduleOnBattery(_ on: Bool) {
+        guard on != pauseScheduleOnBattery else { return }
+        pauseScheduleOnBattery = on
+        UserDefaults.standard.set(on, forKey: "PauseScheduleOnBattery")
+        reconcile()
+    }
+
+    func setWakeAtScheduleStart(_ on: Bool) {
+        guard on != wakeAtScheduleStart else { return }
+        wakeAtScheduleStart = on
+        UserDefaults.standard.set(on, forKey: "WakeAtScheduleStart")
+        reconcile()
+    }
+
+    func setWakeAtScheduleStartOnBattery(_ on: Bool) {
+        guard on != wakeAtScheduleStartOnBattery else { return }
+        wakeAtScheduleStartOnBattery = on
+        UserDefaults.standard.set(on, forKey: "WakeAtScheduleStartOnBattery")
+        reconcile()
+    }
+
     func setSchedule(_ new: WeeklySchedule) {
         let normalized = new.normalized()
         guard normalized != schedule else { return }
@@ -1302,6 +1387,7 @@ final class SleepManager {
             }
             return "suppressed until \(Self.clockString(until))"
         }
+        if isSchedulePausedForBattery { return "paused on battery" }
         if let end = scheduleClaimEnd {
             return "awake until \(Self.clockString(end))"
         }
