@@ -11,12 +11,17 @@ auto-update prompt.
 
 ## [Unreleased]
 
-## [0.11.0] - 2026-11-21
+## [0.11.1] - 2026-11-21
 
 ### Added
 - **Let the Mac sleep when the network is gone** (Settings ▸ General). Once
   your Mac has had no network connection for 3 minutes, Newt stops holding it
   awake, and starts again when a connection returns. Brief drops are ignored.
+
+## [0.11.0] - 2026-11-21
+
+Tagged but never published — its build couldn't start. Everything in it ships
+in 0.11.1.
 
 ## [0.10.1] - 2026-10-04
 
@@ -516,7 +521,8 @@ Initial public release.
   `SMAppService.daemon(plistName:)`.
 - Lizard menu bar icon (filled when engaged, outline when idle).
 
-[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/acheris-labs/newt/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/acheris-labs/newt/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/acheris-labs/newt/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/acheris-labs/newt/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/acheris-labs/newt/compare/v0.9.2...v0.10.0
