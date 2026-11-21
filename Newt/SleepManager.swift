@@ -67,8 +67,9 @@ enum NotificationOption: String, CaseIterable {
 /// slider, the weekly schedule, dynamic claims raised over `newt://` (an AI
 /// agent working through its hooks, say), and the lingering claim those leave
 /// behind — and
-/// two *vetoes* can refuse — the low battery floor and manual suppression.
-/// Assertions are applied when at least one claim is up and neither veto is.
+/// three *vetoes* can refuse — the low battery floor, a lost network, and
+/// manual suppression. Assertions are applied when at least one claim is up and
+/// no veto is.
 /// `reconcile()` is the only place that decides; nothing else touches the
 /// assertion or helper APIs.
 final class SleepManager {
@@ -148,6 +149,13 @@ final class SleepManager {
     private var systemObservers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
     private let helper = HelperClient()
     private let battery = BatteryMonitor()
+    private let network = NetworkMonitor()
+    /// Whether the current network veto has been announced, so it's said once per outage.
+    private var networkVetoAnnounced = false
+
+    /// How long the network has to stay down before it vetoes. Long enough to
+    /// ride out a flaky hotspot; short enough to let a Mac sleep on a plane.
+    static let networkGraceSeconds: TimeInterval = 3 * 60
 
     /// Claims raised from outside — an AI agent while it works, or anything
     /// else driving `newt://claim`. In memory only: a Newt restart drops them,
@@ -524,6 +532,10 @@ final class SleepManager {
     /// was killed). Off by default. See `resumeIfNeeded()`.
     private(set) var resumeOnLaunch = false
 
+    /// When on, losing every network interface for `networkGraceSeconds`
+    /// vetoes keep-awake until one comes back.
+    private(set) var holdOffWhenOffline = false
+
     /// Whether the weekly schedule gets a vote. Off by default so an upgrade
     /// never starts holding the Mac awake on its own.
     private(set) var scheduleEnabled = false
@@ -621,6 +633,9 @@ final class SleepManager {
         displayWindowEnd = max(displayWindowStart + 1, min(48, we))
         pauseDisplayOnBattery = defaults.object(forKey: "PauseDisplayOnBattery") as? Bool ?? false
         resumeOnLaunch = defaults.object(forKey: "ResumeOnLaunch") as? Bool ?? false
+        network.onChange = { [weak self] in self?.reconcile() }
+        holdOffWhenOffline = defaults.bool(forKey: "HoldOffWhenOffline")
+        if holdOffWhenOffline { network.start() }
         // Notification options — missing key → off (opt-in).
         for option in NotificationOption.allCases {
             if defaults.object(forKey: option.defaultsKey) as? Bool ?? false {
@@ -688,7 +703,13 @@ final class SleepManager {
         let workspace = NSWorkspace.shared.notificationCenter
         systemObservers.append((workspace, workspace.addObserver(
             forName: NSWorkspace.didWakeNotification,
-            object: nil, queue: .main, using: reconcileOnEvent)))
+            object: nil, queue: .main) { [weak self] _ in
+                // Wi-Fi drops with sleep, so the outage clock only counts awake
+                // time — otherwise a lid-closed scheduled wake would be vetoed
+                // before the network had a chance to rejoin, and sleep again.
+                self?.network.restartOutageClock()
+                self?.reconcile()
+            }))
         for name in [Notification.Name.NSSystemClockDidChange,
                      Notification.Name.NSSystemTimeZoneDidChange] {
             systemObservers.append((.default, NotificationCenter.default.addObserver(
@@ -823,6 +844,9 @@ final class SleepManager {
         if let blocked = blockedByBattery {
             return "Can't engage — battery \(blocked.percent)% is at or below your \(blocked.threshold)% floor"
         }
+        if blockedByNetwork {
+            return "Can't engage — no network. Reconnect, or turn off the network cutoff in Settings."
+        }
         if isSuppressed {
             return "Can't engage — Newt is suppressed. Untick Suppress in the menu."
         }
@@ -901,7 +925,8 @@ final class SleepManager {
     }
 
     private var shouldHoldAwake: Bool {
-        guard blockedByBattery == nil, !isSuppressed, !enabledModes.isEmpty else { return false }
+        guard blockedByBattery == nil, !blockedByNetwork, !isSuppressed,
+              !enabledModes.isEmpty else { return false }
         return hasAnyClaim
     }
 
@@ -922,6 +947,7 @@ final class SleepManager {
         // Before computing the answer: enabling the monitor polls immediately,
         // which re-enters here and is dropped by the guard above.
         updateBatteryMonitor()
+        announceNetworkVeto()
 
         let wasActive = assertionsActive
         let want = shouldHoldAwake
@@ -955,6 +981,14 @@ final class SleepManager {
         if claimPossible { battery.enable() } else { battery.disable() }
     }
 
+    private func announceNetworkVeto() {
+        let blocked = blockedByNetwork
+        if blocked, !networkVetoAnnounced, isActive {
+            onHelperMessage?("Held off keep-awake — no network for \(Int(Self.networkGraceSeconds / 60)) minutes")
+        }
+        networkVetoAnnounced = blocked
+    }
+
     private func clearExpiredSuppression() {
         guard let until = suppressedUntil, until <= Date() else { return }
         suppressedUntil = nil
@@ -984,6 +1018,9 @@ final class SleepManager {
         // is what stops it re-arming four times a minute.
         if let until = lingerUntil, until > Date() {
             fire = min(fire ?? until, until)
+        }
+        if let at = networkVetoStart, at > Date() {
+            fire = min(fire ?? at, at)
         }
         // A second past the edge, so re-arming can't land on the same instant
         // and spin.
@@ -1044,6 +1081,20 @@ final class SleepManager {
         return (snap.percent, threshold)
     }
 
+    /// When the current outage starts vetoing, or nil when there's no outage or
+    /// the cutoff is off. Absolute, derived from a stored date, so the boundary
+    /// timer can hang off it.
+    private var networkVetoStart: Date? {
+        guard holdOffWhenOffline, let since = network.offlineSince else { return nil }
+        return since.addingTimeInterval(Self.networkGraceSeconds)
+    }
+
+    /// True while the network has been down for longer than the grace period.
+    var blockedByNetwork: Bool {
+        guard let at = networkVetoStart else { return false }
+        return at <= Date()
+    }
+
     /// Menu label for the slider: "off" / "indefinite" / remaining + end time
     /// ("1h 23m/20:46", "+1" marking an end that lands tomorrow). Describes the
     /// slider's own claim; when a veto is in force it says so instead, since the
@@ -1051,6 +1102,7 @@ final class SleepManager {
     func displayString() -> String {
         if isSuppressed { return "suppressed" }
         if let blocked = blockedByBattery { return "held off — battery \(blocked.percent)%" }
+        if blockedByNetwork { return "held off — no network" }
         switch state {
         case .off:        return "off"
         case .indefinite: return "indefinite"
@@ -1269,6 +1321,14 @@ final class SleepManager {
         guard on != pauseDisplayOnBattery else { return }
         pauseDisplayOnBattery = on
         UserDefaults.standard.set(on, forKey: "PauseDisplayOnBattery")
+        reconcile()
+    }
+
+    func setHoldOffWhenOffline(_ on: Bool) {
+        guard on != holdOffWhenOffline else { return }
+        holdOffWhenOffline = on
+        UserDefaults.standard.set(on, forKey: "HoldOffWhenOffline")
+        if on { network.start() } else { network.stop() }
         reconcile()
     }
 

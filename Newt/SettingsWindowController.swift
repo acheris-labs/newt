@@ -27,6 +27,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
                                      target: nil, action: nil)
     private let autoUpdateBox = NSButton(checkboxWithTitle: "Check for updates automatically",
                                          target: nil, action: nil)
+    private let offlineBox = NSButton(checkboxWithTitle: "Let the Mac sleep when the network is gone",
+                                      target: nil, action: nil)
     /// Only on Macs that have a battery to run down.
     private var batterySlider: BatterySliderView?
     private var claimLifetimeSlider: DurationSliderView!
@@ -94,7 +96,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     // Tall enough for General, which is the longest tab: four sliders and their
     // hints. The tab bar and the 12pt inset come off this before the tab's own
     // fixed-height layout gets a look in, so it needs headroom over that height.
-    private static let contentSize = NSSize(width: 600, height: 720)
+    private static let contentSize = NSSize(width: 600, height: 790)
 
     init(sleep: SleepManager, login: LoginItemController, updater: SPUUpdaterProviding) {
         self.sleep = sleep
@@ -167,6 +169,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         loginBox.state = login.isEnabled ? .on : .off
         resumeBox.state = sleep.resumeOnLaunch ? .on : .off
         autoUpdateBox.state = updater.automaticallyChecksForUpdates ? .on : .off
+        offlineBox.state = sleep.holdOffWhenOffline ? .on : .off
         batterySlider?.refresh(value: sleep.batteryThresholdPercent)
         claimLifetimeSlider.refresh(
             position: sleep.dynamicClaimMaxPosition,
@@ -304,9 +307,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     // MARK: - General
 
     private func generalView() -> NSView {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 640))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 710))
         let sliderHeight = 44.0, gapBeforeHint = 6.0, gapAfterHint = 20.0
-        var top = 618.0
+        var top = 688.0
 
         for box in [loginBox, resumeBox, autoUpdateBox] {
             box.target = self
@@ -320,7 +323,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         expiryBox.frame = NSRect(x: 20, y: top - 20, width: 480, height: 20)
         view.addSubview(expiryBox)
         top -= 26
-        top -= 12
+
+        offlineBox.target = self
+        offlineBox.action = #selector(generalChanged)
+        offlineBox.frame = NSRect(x: 20, y: top - 20, width: 480, height: 20)
+        view.addSubview(offlineBox)
+        top -= 20 + gapBeforeHint
+        top = addHint("If no network connection has been up for 3 minutes, Newt lets go so the "
+                      + "Mac can sleep, and picks up again when one comes back. Short drops, "
+                      + "like a flaky hotspot, don't count.",
+                      to: view, top: top) - gapAfterHint
 
         // Desktops have nothing to run down, so the cutoff would be meaningless.
         if sleep.hasBattery {
@@ -405,6 +417,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             if let message = login.setEnabled(loginBox.state == .on) { showError(message) }
         case resumeBox:
             sleep.setResumeOnLaunch(resumeBox.state == .on)
+        case offlineBox:
+            sleep.setHoldOffWhenOffline(offlineBox.state == .on)
         default:
             updater.automaticallyChecksForUpdates = autoUpdateBox.state == .on
         }

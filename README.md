@@ -101,6 +101,11 @@ the order they appear.
 - **Check for updates automatically** — Newt updates itself.
 - **Notify when keep-awake expires** — a notification when a timed session runs
   out, so a Mac that's about to start sleeping again doesn't surprise you.
+- **Let the Mac sleep when the network is gone** — off by default. When on, if
+  your Mac has had no network connection for 3 minutes, Newt lets go so macOS
+  can sleep, then picks up again when a connection comes back. Short drops, like
+  a flaky phone hotspot, don't count — but switching the hotspot off to board a
+  plane does. While it's in force the Keep awake slider greys out.
 - **Low battery cutoff** (0–30%) — while Newt is holding your Mac awake *on
   battery*, if the charge falls to or below this floor Newt lets go so macOS can
   sleep before the battery runs flat, then picks up again once you plug in. 0
@@ -280,8 +285,8 @@ not just an agent's. It's off unless you turn it on.
 
 Dynamic claims, and the lingering spell they leave behind, hold your Mac awake
 independently of the Keep awake slider and the schedule. Any one of them is
-enough. **Suppress all claims** and the low battery cutoff still override every
-one of them.
+enough. **Suppress all claims**, the low battery cutoff and the network cutoff
+still override every one of them.
 
 ### When something gets stuck
 

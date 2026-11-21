@@ -24,7 +24,8 @@ SWIFTFLAGS         += -F $(SPARKLE_DIR) -framework Sparkle \
 APP_SRC     := Newt/main.swift Newt/AppDelegate.swift \
                Newt/StatusItemController.swift Newt/SleepManager.swift \
                Newt/HelperClient.swift Newt/LoginItemController.swift \
-               Newt/BatteryMonitor.swift Newt/NotificationManager.swift \
+               Newt/BatteryMonitor.swift Newt/NetworkMonitor.swift \
+               Newt/NotificationManager.swift \
                Newt/Schedule.swift Newt/ScheduleGridView.swift \
                Newt/DynamicClaims.swift Newt/IntegrationInstaller.swift \
                Newt/SettingsWindowController.swift \

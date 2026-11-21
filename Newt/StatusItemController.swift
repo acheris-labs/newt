@@ -589,6 +589,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         applyStatusImage()
         let blocked = sleep.blockedByBattery
         let vetoLabel = blocked.map { "battery \($0.percent)% — recharge to enable" }
+                    ?? (sleep.blockedByNetwork ? "no network — reconnect to enable" : nil)
                     ?? (sleep.isSuppressed ? "suppressed" : nil)
         durationSliderView.refresh(position: sleep.sliderPosition,
                                    displayText: vetoLabel ?? sleep.displayString(),
@@ -1116,6 +1117,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         if let blocked = sleep.blockedByBattery {
             return "Held off — battery \(blocked.percent)% is at or below your"
                  + " \(blocked.threshold)% floor"
+        }
+        if sleep.blockedByNetwork {
+            return "Held off — no network connection"
         }
         // Every contributor, not just the first: "why is my Mac awake" usually
         // has more than one answer, and the icon alone can't say which.

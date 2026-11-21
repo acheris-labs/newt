@@ -40,6 +40,7 @@ Two binaries inside one `.app` bundle, plus a small shared protocol.
   - `.pluginFile` (opencode) writes `Newt/Resources/newt-opencode.js` to `~/.config/opencode/plugin/`, a file Newt owns outright — so no merge, no backup, and uninstall is a delete. It refuses to overwrite or delete a file at that path without our marker. opencode has **no** hook that fires when a turn starts (its only shell hooks are `experimental.hook.file_edited` and `session_completed`), so a plugin is the sole way to raise a claim; it globs `{plugin,plugins}/*.{ts,js}` in its config dirs at startup, and `opencode.json` is never read. A path-loaded plugin **must** export `id` as well as `server` or it fails to load — the published types mark `id` optional because npm plugins take theirs from `package.json`, and the failure is only a log line. The plugin claims on `session.status` → `busy` and releases on `idle`; `retry` holds, since that's a stalled request still working. `refreshInstalledPlugins()` rewrites a stale plugin at launch, since a Newt upgrade otherwise leaves the old file in place.
 - `SettingsWindowController.swift` is the app's only `NSWindow`: an `NSTabView` of General / Wake Modes / Icon / Schedule / Left Click / Integrations. Every control writes straight through to `SleepManager` on change — no OK or Apply. `SPUUpdaterProviding` is a one-property protocol so this file doesn't import Sparkle and can be exercised in a harness with a stub.
 - `ScheduleGridView.swift` is the custom weekly grid (drag to add/move/resize, overnight wrap). It's hosted by the Schedule tab, but knows nothing about it — it just reports a `WeeklySchedule` through `onChange`.
+- `NetworkMonitor.swift` wraps `NWPathMonitor` and records when the current outage began (`offlineSince`). The veto itself is computed in `SleepManager` as `offlineSince + networkGraceSeconds`, a stored absolute date, so it hangs off `scheduleBoundaryTimer()` like the linger.
 - `HelperClient.swift` registers the daemon via `SMAppService.daemon(plistName:)` and brokers XPC calls (`setDisableSleep`, `setScheduledWake`) over an `NSXPCConnection` with identifier-pinned code requirements on both ends.
 - `BatteryMonitor.swift` polls `IOPSCopyPowerSourcesInfo` every 15s while engaged; trips disengage when on battery and percent ≤ user-configured threshold.
 - `LoginItemController.swift` uses `SMAppService.mainApp` for auto-launch.
@@ -57,9 +58,10 @@ Two binaries inside one `.app` bundle, plus a small shared protocol.
 duration slider (`state: AwakeState`), the weekly schedule, *dynamic claims*
 raised over `newt://claim` (`dynamicClaims`, typically an AI agent's hooks), and
 the *lingering claim* (`lingerUntil`) those leave behind — and
-two vetoes can refuse — the low battery floor (`blockedByBattery`) and manual
-suppression (`suppressedUntil`). Assertions apply when at least one claim is up
-and neither veto is. `SleepManager.reconcile()` is the **only** function that applies or
+three vetoes can refuse — the low battery floor (`blockedByBattery`), a lost
+network (`blockedByNetwork`, after `networkGraceSeconds` with no non-loopback
+interface, opt-in) and manual suppression (`suppressedUntil`). Assertions apply
+when at least one claim is up and no veto is. `SleepManager.reconcile()` is the **only** function that applies or
 releases anything; `engage`/`disengage`/`setSchedule`/`setSuppressed` all just
 change state and call it. Consequences worth remembering:
 
@@ -157,7 +159,7 @@ covered by three notification observers that just call `reconcile()`.
 
 ### UserDefaults keys (all in standard defaults)
 
-`BatteryThresholdPercent`, `WakeMode.<rawValue>` (one per case), `LeftClickAction`, `LastUsedSliderPosition`, `FixedClickSliderPosition`, `ScheduleEnabled`, `ScheduleBlocks` (JSON `Data`), `PauseScheduleOnBattery` / `WakeAtScheduleStart` / `WakeAtScheduleStartOnBattery` (`Bool`, absent = off), `SuppressedUntil` (`Double`, absent = not suppressed), `BadgeSizeScale` (`Double`), `BadgeOutline` (`Bool`), `BadgeSpin` (`Bool`), `HideIconAfterPosition` (`Int`, **absent = the top stop, i.e. never hide**), `LingerPosition` (`Int`, absent = 0 = off; indexes `lingerDurations`, **not** `sliderDurations`), `IconBackdropIdle` / `IconBackdropAwake` (`String`, an `IconBackdrop` rawValue, **absent = `.none`**), `IconCutoutIdle` / `IconCutoutAwake` (`Bool`), `BadgeColorScheduled` / `BadgeColorDynamic` / `IconColorGlyphIdle` / `IconColorAwake` / `IconColorBackdropIdle` / `IconColorBackdropAwake` (`[Double]` sRGB components; **absent means "use the system colour"**, which keeps the default dynamic across light/dark — don't write the system colour's components into them). All have sensible defaults for fresh installs — never add a migration that breaks an upgrade.
+`BatteryThresholdPercent`, `WakeMode.<rawValue>` (one per case), `LeftClickAction`, `LastUsedSliderPosition`, `FixedClickSliderPosition`, `ScheduleEnabled`, `ScheduleBlocks` (JSON `Data`), `PauseScheduleOnBattery` / `WakeAtScheduleStart` / `WakeAtScheduleStartOnBattery` (`Bool`, absent = off), `SuppressedUntil` (`Double`, absent = not suppressed), `BadgeSizeScale` (`Double`), `BadgeOutline` (`Bool`), `BadgeSpin` (`Bool`), `HideIconAfterPosition` (`Int`, **absent = the top stop, i.e. never hide**), `HoldOffWhenOffline` (`Bool`, absent = off), `LingerPosition` (`Int`, absent = 0 = off; indexes `lingerDurations`, **not** `sliderDurations`), `IconBackdropIdle` / `IconBackdropAwake` (`String`, an `IconBackdrop` rawValue, **absent = `.none`**), `IconCutoutIdle` / `IconCutoutAwake` (`Bool`), `BadgeColorScheduled` / `BadgeColorDynamic` / `IconColorGlyphIdle` / `IconColorAwake` / `IconColorBackdropIdle` / `IconColorBackdropAwake` (`[Double]` sRGB components; **absent means "use the system colour"**, which keeps the default dynamic across light/dark — don't write the system colour's components into them). All have sensible defaults for fresh installs — never add a migration that breaks an upgrade.
 
 AppKit also persists the status item's visibility itself, as `NSStatusItem
 VisibleCC NewtStatusItem`. Newt never writes that key — `configureStatusItem()`

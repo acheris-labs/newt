@@ -11,6 +11,11 @@ auto-update prompt.
 
 ## [Unreleased]
 
+### Added
+- **Let the Mac sleep when the network is gone** (Settings ▸ General). Once
+  your Mac has had no network connection for 3 minutes, Newt stops holding it
+  awake, and starts again when a connection returns. Brief drops are ignored.
+
 ## [0.10.1] - 2026-10-04
 
 ### Fixed
